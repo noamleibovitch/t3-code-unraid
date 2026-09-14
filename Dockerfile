@@ -62,7 +62,7 @@ RUN set -eux; \
         --output "/tmp/${archive}"; \
     printf '%s  %s\n' "${ollama_sha256}" "/tmp/${archive}" | sha256sum --check --strict -; \
     mkdir -p /opt/ollama; \
-    tar --use-compress-program=unzstd -xf "/tmp/${archive}" -C /opt/ollama ./bin/ollama; \
+    tar --use-compress-program=unzstd -xf "/tmp/${archive}" -C /opt/ollama bin/ollama; \
     /opt/ollama/bin/ollama --version; \
     rm -f "/tmp/${archive}"
 
