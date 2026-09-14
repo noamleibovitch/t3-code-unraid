@@ -46,6 +46,6 @@ exec t3 serve \
     --host 0.0.0.0 \
     --port "${T3_PORT}" \
     --base-dir "${T3CODE_HOME}" \
-    --cwd /workspace \
     --no-browser \
-    "$@"
+    "$@" \
+    /workspace
