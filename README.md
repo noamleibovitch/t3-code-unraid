@@ -26,7 +26,7 @@ The GitHub CLI archive is selected for Debian `amd64` or `arm64` and checked aga
 
 ## Runtime contract
 
-- The process runs as the non-root `t3` user (UID/GID `1000:1000`).
+- The process runs as the non-root `t3` user (UID/GID `10000:10000`, matching the `hermes` appdata owner on this Unraid host).
 - `/workspace` is the expected project bind mount and the container working directory.
 - `T3_PORT` controls both the T3 listener and the health check; its default is `9877`.
 - T3 binds to `0.0.0.0` **inside the container** so Docker bridge port publishing can reach it.
@@ -45,7 +45,7 @@ The runtime paths are explicit:
 | `T3CODE_HOME` | `/home/t3/.local/share/t3-code` |
 | `T3_PORT` | `9877` by default |
 
-Any host bind directories that T3 must write need to be writable by UID/GID `1000:1000`.
+Any host bind directories that T3 must write need to be writable by UID/GID `10000:10000`. For this Unraid host, use the persistent paths `/mnt/user/appdata/hermes-agent-sandy/t3-code-home` → `/home/t3` and `/mnt/user/appdata/hermes-agent-sandy/t3-code-workspace` → `/workspace`; inside the Hermes container these are `/opt/data/t3-code-home` and `/opt/data/t3-code-workspace`.
 
 ## Loopback-only host publication
 

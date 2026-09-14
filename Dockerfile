@@ -73,8 +73,8 @@ RUN set -eux; \
         git \
         openssh-client; \
     rm -rf /var/lib/apt/lists/*; \
-    groupmod --new-name t3 node; \
-    usermod --login t3 --home /home/t3 --move-home --shell /bin/bash node; \
+    groupmod --gid 10000 --new-name t3 node; \
+    usermod --uid 10000 --login t3 --home /home/t3 --move-home --shell /bin/bash node; \
     mkdir -p \
         "${XDG_CONFIG_HOME}" \
         "${XDG_CACHE_HOME}" \
