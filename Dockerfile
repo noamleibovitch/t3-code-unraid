@@ -6,6 +6,7 @@ ARG T3_VERSION=0.0.40
 ARG CODEX_VERSION=0.154.0
 ARG OPENCODE_VERSION=1.18.30
 ARG GH_VERSION=2.100.0
+ARG OLLAMA_VERSION=0.34.0
 
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -18,7 +19,8 @@ RUN set -eux; \
         ca-certificates \
         curl \
         git \
-        python3; \
+        python3 \
+        zstd; \
     rm -rf /var/lib/apt/lists/*; \
     npm install --global --omit=dev \
         "t3@${T3_VERSION}" \
@@ -45,12 +47,32 @@ RUN set -eux; \
     gh version; \
     rm -rf "/tmp/${archive}" "/tmp/gh_${GH_VERSION}_linux_${gh_arch}"
 
+# The CLI supports direct Ollama Cloud discovery. No local Ollama server,
+# GPU runtime, or model storage is included in the final image.
+RUN set -eux; \
+    architecture="$(dpkg --print-architecture)"; \
+    case "${architecture}" in \
+        amd64) ollama_arch=amd64; ollama_sha256=cf95886728959aa09910bb34de5cca1cc5a8f68003b5597197d3f2c2d57c0804 ;; \
+        arm64) ollama_arch=arm64; ollama_sha256=6a9e5b3650c2024d8a78da86b23876f6eea238657a3262d7e5ec0f3688c5d28e ;; \
+        *) echo "Unsupported architecture for Ollama CLI: ${architecture}" >&2; exit 1 ;; \
+    esac; \
+    archive="ollama-linux-${ollama_arch}.tar.zst"; \
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+        "https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}/${archive}" \
+        --output "/tmp/${archive}"; \
+    printf '%s  %s\n' "${ollama_sha256}" "/tmp/${archive}" | sha256sum --check --strict -; \
+    mkdir -p /opt/ollama; \
+    tar --use-compress-program=unzstd -xf "/tmp/${archive}" -C /opt/ollama ./bin/ollama; \
+    /opt/ollama/bin/ollama --version; \
+    rm -f "/tmp/${archive}"
+
 FROM node:22-bookworm-slim AS runtime
 
 ARG T3_VERSION=0.0.40
 ARG CODEX_VERSION=0.154.0
 ARG OPENCODE_VERSION=1.18.30
 ARG GH_VERSION=2.100.0
+ARG OLLAMA_VERSION=0.34.0
 
 LABEL org.opencontainers.image.title="T3 Code for Unraid" \
       org.opencontainers.image.description="Tailscale-hook-compatible T3 Code server with a non-root application runtime" \
@@ -87,6 +109,7 @@ RUN set -eux; \
 
 COPY --from=toolchain /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
 COPY --from=toolchain /usr/local/bin/gh /usr/local/bin/gh
+COPY --from=toolchain /opt/ollama/bin/ollama /usr/local/bin/ollama
 
 RUN set -eux; \
     ln -s ../lib/node_modules/t3/dist/bin.mjs /usr/local/bin/t3; \
@@ -94,7 +117,8 @@ RUN set -eux; \
     ln -s ../lib/node_modules/opencode-ai/bin/opencode.exe /usr/local/bin/opencode; \
     node -e "const expected=[['/usr/local/lib/node_modules/t3/package.json',process.argv[1]],['/usr/local/lib/node_modules/@openai/codex/package.json',process.argv[2]],['/usr/local/lib/node_modules/opencode-ai/package.json',process.argv[3]]]; for (const [file,want] of expected) { const got=require(file).version; if (got !== want) throw new Error(file + ': expected ' + want + ', got ' + got); }" \
         "${T3_VERSION}" "${CODEX_VERSION}" "${OPENCODE_VERSION}"; \
-    node -e "const out=require('node:child_process').execFileSync('gh',['version'],{encoding:'utf8'}); if (!out.startsWith('gh version ' + process.argv[1] + ' ')) throw new Error('unexpected gh version: ' + out);" "${GH_VERSION}"
+    node -e "const out=require('node:child_process').execFileSync('gh',['version'],{encoding:'utf8'}); if (!out.startsWith('gh version ' + process.argv[1] + ' ')) throw new Error('unexpected gh version: ' + out);" "${GH_VERSION}"; \
+    ollama --version | grep -F "${OLLAMA_VERSION}"
 
 COPY entrypoint.sh /usr/local/bin/t3-entrypoint
 COPY healthcheck.sh /usr/local/bin/t3-healthcheck
