@@ -53,7 +53,7 @@ ARG OPENCODE_VERSION=1.18.30
 ARG GH_VERSION=2.100.0
 
 LABEL org.opencontainers.image.title="T3 Code for Unraid" \
-      org.opencontainers.image.description="Non-root T3 Code server with pinned Codex, OpenCode, and GitHub CLIs" \
+      org.opencontainers.image.description="Tailscale-hook-compatible T3 Code server with a non-root application runtime" \
       org.opencontainers.image.version="${T3_VERSION}"
 
 ENV HOME=/home/t3 \
@@ -71,6 +71,7 @@ RUN set -eux; \
         bash \
         ca-certificates \
         git \
+        gosu \
         openssh-client; \
     rm -rf /var/lib/apt/lists/*; \
     groupmod --gid 10000 --new-name t3 node; \
@@ -103,8 +104,6 @@ RUN chmod 0755 /usr/local/bin/t3-entrypoint /usr/local/bin/t3-healthcheck
 WORKDIR /workspace
 VOLUME ["/workspace"]
 EXPOSE 9877
-
-USER t3:t3
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["/usr/local/bin/t3-healthcheck"]

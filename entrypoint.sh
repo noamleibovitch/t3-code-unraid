@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+# Unraid's Docker Tailscale integration replaces the image entrypoint with a
+# hook that installs and starts Tailscale. That hook requires UID 0. Once it
+# has handed control back to this entrypoint, immediately run the application
+# as the dedicated unprivileged account.
+if [ "$(id -u)" -eq 0 ]; then
+    exec gosu t3:t3 /usr/local/bin/t3-entrypoint "$@"
+fi
+
 T3_PORT="${T3_PORT:-9877}"
 
 case "${T3_PORT}" in
