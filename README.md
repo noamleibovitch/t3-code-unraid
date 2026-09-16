@@ -9,7 +9,7 @@ This directory is a local Docker build context for a headless T3 Code server. It
 Example build on a Docker-capable host:
 
 ```sh
-docker build --tag t3-code-unraid:0.0.40 /opt/data/t3-code-unraid
+docker build --tag t3-code-unraid:0.0.42 /opt/data/t3-code-unraid
 ```
 
 No remote `latest` tag is used. The direct tool versions are pinned as follows:
@@ -17,11 +17,17 @@ No remote `latest` tag is used. The direct tool versions are pinned as follows:
 | Component | Pinned version/source |
 | --- | --- |
 | Node.js | `node:22-bookworm-slim` family |
-| T3 Code (`t3`) | `0.0.40` |
+| T3 Code (`t3`) | `0.0.42` |
 | Codex CLI (`@openai/codex`) | `0.154.0` |
-| OpenCode CLI (`opencode-ai`) | `1.18.30` |
-| GitHub CLI (`gh`) | `2.100.0` |
-| Ollama Cloud client (`ollama`) | `0.34.0` |
+| OpenCode CLI (`opencode-ai`) | `1.18.31` |
+| GitHub CLI (`gh`) | `2.101.0` |
+| Ollama Cloud client (`ollama`) | `0.34.1` |
+
+From `t3` `0.0.41` onward the npm package ships a launcher at `bin/t3.js` and
+resolves its platform binary from `@t3code/t3-<platform>-<arch>`. The image links
+`/usr/local/bin/t3` to that launcher; the older `dist/bin.mjs` path still exists
+but is no longer the declared entry point. Version pins are asserted in both
+build stages, so a mismatch fails the image build instead of shipping silently.
 
 The GitHub CLI and Ollama client archives are selected for Debian `amd64` or `arm64` and checked against release SHA-256 values before installation. The final image contains only the Ollama client binary: it does not run a local Ollama server, include model storage, or require a GPU.
 

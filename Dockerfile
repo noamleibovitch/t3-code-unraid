@@ -2,11 +2,11 @@
 
 FROM node:22-bookworm-slim AS toolchain
 
-ARG T3_VERSION=0.0.40
+ARG T3_VERSION=0.0.42
 ARG CODEX_VERSION=0.154.0
-ARG OPENCODE_VERSION=1.18.30
-ARG GH_VERSION=2.100.0
-ARG OLLAMA_VERSION=0.34.0
+ARG OPENCODE_VERSION=1.18.31
+ARG GH_VERSION=2.101.0
+ARG OLLAMA_VERSION=0.34.1
 
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -33,8 +33,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) gh_arch=amd64; gh_sha256=e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be ;; \
-        arm64) gh_arch=arm64; gh_sha256=ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961 ;; \
+        amd64) gh_arch=amd64; gh_sha256=9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8 ;; \
+        arm64) gh_arch=arm64; gh_sha256=b57e8063f18862647c9d22727c32e9da1b963f8bf9db648fe123a6975695640f ;; \
         *) echo "Unsupported architecture for GitHub CLI: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"; \
@@ -52,8 +52,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) ollama_arch=amd64; ollama_sha256=cf95886728959aa09910bb34de5cca1cc5a8f68003b5597197d3f2c2d57c0804 ;; \
-        arm64) ollama_arch=arm64; ollama_sha256=6a9e5b3650c2024d8a78da86b23876f6eea238657a3262d7e5ec0f3688c5d28e ;; \
+        amd64) ollama_arch=amd64; ollama_sha256=f361dc3992ec07e4ad429f4bb2d10d4663ba2c295f9a9a688c7d52f4ba650034 ;; \
+        arm64) ollama_arch=arm64; ollama_sha256=b4bdbbbf5faf2fc15f9f6d775c984a33d5c6fee7b4fdeb3fb56612e58a172db9 ;; \
         *) echo "Unsupported architecture for Ollama CLI: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="ollama-linux-${ollama_arch}.tar.zst"; \
@@ -68,11 +68,11 @@ RUN set -eux; \
 
 FROM node:22-bookworm-slim AS runtime
 
-ARG T3_VERSION=0.0.40
+ARG T3_VERSION=0.0.42
 ARG CODEX_VERSION=0.154.0
-ARG OPENCODE_VERSION=1.18.30
-ARG GH_VERSION=2.100.0
-ARG OLLAMA_VERSION=0.34.0
+ARG OPENCODE_VERSION=1.18.31
+ARG GH_VERSION=2.101.0
+ARG OLLAMA_VERSION=0.34.1
 
 LABEL org.opencontainers.image.title="T3 Code for Unraid" \
       org.opencontainers.image.description="Tailscale-hook-compatible T3 Code server with a non-root application runtime" \
@@ -112,7 +112,7 @@ COPY --from=toolchain /usr/local/bin/gh /usr/local/bin/gh
 COPY --from=toolchain /opt/ollama/bin/ollama /usr/local/bin/ollama
 
 RUN set -eux; \
-    ln -s ../lib/node_modules/t3/dist/bin.mjs /usr/local/bin/t3; \
+    ln -s ../lib/node_modules/t3/bin/t3.js /usr/local/bin/t3; \
     ln -s ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex; \
     ln -s ../lib/node_modules/opencode-ai/bin/opencode.exe /usr/local/bin/opencode; \
     node -e "const expected=[['/usr/local/lib/node_modules/t3/package.json',process.argv[1]],['/usr/local/lib/node_modules/@openai/codex/package.json',process.argv[2]],['/usr/local/lib/node_modules/opencode-ai/package.json',process.argv[3]]]; for (const [file,want] of expected) { const got=require(file).version; if (got !== want) throw new Error(file + ': expected ' + want + ', got ' + got); }" \
