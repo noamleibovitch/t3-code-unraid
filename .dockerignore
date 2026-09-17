@@ -2,5 +2,6 @@
 !Dockerfile
 !entrypoint.sh
 !healthcheck.sh
+!check-runtime-deps.mjs
 !.dockerignore
 !README.md

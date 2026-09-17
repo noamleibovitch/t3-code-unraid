@@ -7,6 +7,7 @@ on:
       - Dockerfile
       - entrypoint.sh
       - healthcheck.sh
+      - check-runtime-deps.mjs
       - .dockerignore
       - .github/workflows/build-ghcr.yml
   workflow_dispatch:

@@ -94,6 +94,7 @@ RUN set -eux; \
         ca-certificates \
         git \
         gosu \
+        libatomic1 \
         openssh-client; \
     rm -rf /var/lib/apt/lists/*; \
     groupmod --gid 10000 --new-name t3 node; \
@@ -122,8 +123,14 @@ RUN set -eux; \
 
 COPY entrypoint.sh /usr/local/bin/t3-entrypoint
 COPY healthcheck.sh /usr/local/bin/t3-healthcheck
+COPY check-runtime-deps.mjs /usr/local/bin/t3-check-runtime-deps
 
-RUN chmod 0755 /usr/local/bin/t3-entrypoint /usr/local/bin/t3-healthcheck
+RUN chmod 0755 /usr/local/bin/t3-entrypoint /usr/local/bin/t3-healthcheck /usr/local/bin/t3-check-runtime-deps
+
+# Fail the build if the pinned T3 native binary cannot start on this base image.
+# A shared-library regression here otherwise ships a healthy-looking image whose
+# container exits immediately (observed: missing libatomic.so.1 -> exit 127).
+RUN /usr/local/bin/t3-check-runtime-deps
 
 WORKDIR /workspace
 VOLUME ["/workspace"]
