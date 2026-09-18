@@ -13,6 +13,7 @@
 
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const require = createRequire("/usr/local/lib/node_modules/t3/package.json");
@@ -27,6 +28,40 @@ try {
 }
 
 const binary = join(packageDir, process.platform === "win32" ? "t3.exe" : "t3");
+
+// The providers live in a dedicated application-owned prefix so T3 can update
+// them from its UI. Refuse to build if that prefix is not actually writable by
+// the application user, because the failure only shows up later as an opaque
+// "Update command exited with code 243" in the UI.
+const providerPrefix = process.env.T3_PROVIDER_PREFIX || "/opt/t3-providers";
+const providerRoot = join(providerPrefix, "lib", "node_modules");
+try {
+  const stats = statSync(providerRoot);
+  if (stats.uid !== 10000 || stats.gid !== 10000) {
+    console.error(
+      `${providerRoot} must be owned by 10000:10000 for in-UI provider updates; got ${stats.uid}:${stats.gid}`,
+    );
+    process.exit(1);
+  }
+} catch (error) {
+  console.error(`cannot inspect provider prefix ${providerRoot}: ${error.message}`);
+  process.exit(1);
+}
+
+// The providers are on PATH; prove they resolve and run, so a broken shim or a
+// skipped install script fails the build instead of the container.
+for (const [command, args] of [
+  ["codex", ["--version"]],
+  ["opencode", ["--version"]],
+]) {
+  try {
+    const output = execFileSync(command, args, { encoding: "utf8" }).trim();
+    console.log(`${command} runtime OK: ${output.split("\n")[0]}`);
+  } catch (error) {
+    console.error(`${command} failed to run from ${providerPrefix}: ${error.message}`);
+    process.exit(1);
+  }
+}
 
 if (process.platform !== "linux") {
   console.log(`skipping ELF dependency check on ${process.platform}`);

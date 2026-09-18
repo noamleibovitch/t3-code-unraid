@@ -6,7 +6,14 @@ set -eu
 # has handed control back to this entrypoint, immediately run the application
 # as the dedicated unprivileged account.
 if [ "$(id -u)" -eq 0 ]; then
-    exec gosu t3:t3 /usr/local/bin/t3-entrypoint "$@"
+    # Resolve gosu before hardening so the binary path is not PATH-dependent.
+    gosu_bin="$(command -v gosu)"
+    # Harden the root phase: /opt/t3-providers/bin is intentionally writable by
+    # the application user (so T3's in-UI provider updates work) and must never
+    # be able to shadow a binary that this root context executes.
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    export PATH
+    exec "${gosu_bin}" t3:t3 /usr/local/bin/t3-entrypoint "$@"
 fi
 
 T3_PORT="${T3_PORT:-9877}"

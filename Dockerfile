@@ -3,10 +3,16 @@
 FROM node:22-bookworm-slim AS toolchain
 
 ARG T3_VERSION=0.0.42
-ARG CODEX_VERSION=0.154.0
+ARG CODEX_VERSION=0.155.0
 ARG OPENCODE_VERSION=1.18.31
 ARG GH_VERSION=2.101.0
-ARG OLLAMA_VERSION=0.34.1
+ARG OLLAMA_VERSION=0.34.2
+
+# Providers (codex, opencode) live in a dedicated prefix owned by the
+# application user so T3's in-UI provider updates can run. T3 itself stays in
+# the root-owned default prefix: the running application must not replace
+# itself, and image updates ship through the Docker template.
+ARG PROVIDER_PREFIX=/opt/t3-providers
 
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -23,11 +29,16 @@ RUN set -eux; \
         zstd; \
     rm -rf /var/lib/apt/lists/*; \
     npm install --global --omit=dev \
-        "t3@${T3_VERSION}" \
+        "t3@${T3_VERSION}"; \
+    node -e "const expected=[['/usr/local/lib/node_modules/t3/package.json',process.argv[1]]]; for (const [file,want] of expected) { const got=require(file).version; if (got !== want) throw new Error(file + ': expected ' + want + ', got ' + got); }" \
+        "${T3_VERSION}"; \
+    npm install --global --omit=dev --prefix "${PROVIDER_PREFIX}" \
+        --allow-scripts=@openai/codex \
+        --allow-scripts=opencode-ai \
         "@openai/codex@${CODEX_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}"; \
-    node -e "const expected=[['/usr/local/lib/node_modules/t3/package.json',process.argv[1]],['/usr/local/lib/node_modules/@openai/codex/package.json',process.argv[2]],['/usr/local/lib/node_modules/opencode-ai/package.json',process.argv[3]]]; for (const [file,want] of expected) { const got=require(file).version; if (got !== want) throw new Error(file + ': expected ' + want + ', got ' + got); }" \
-        "${T3_VERSION}" "${CODEX_VERSION}" "${OPENCODE_VERSION}"; \
+    node -e "const prefix=process.argv[1]; const expected=[[prefix+'/lib/node_modules/@openai/codex/package.json',process.argv[2]],[prefix+'/lib/node_modules/opencode-ai/package.json',process.argv[3]]]; for (const [file,want] of expected) { const got=require(file).version; if (got !== want) throw new Error(file + ': expected ' + want + ', got ' + got); }" \
+        "${PROVIDER_PREFIX}" "${CODEX_VERSION}" "${OPENCODE_VERSION}"; \
     npm cache clean --force
 
 RUN set -eux; \
@@ -69,10 +80,14 @@ RUN set -eux; \
 FROM node:22-bookworm-slim AS runtime
 
 ARG T3_VERSION=0.0.42
-ARG CODEX_VERSION=0.154.0
+ARG CODEX_VERSION=0.155.0
 ARG OPENCODE_VERSION=1.18.31
 ARG GH_VERSION=2.101.0
-ARG OLLAMA_VERSION=0.34.1
+ARG OLLAMA_VERSION=0.34.2
+
+# Must match the toolchain stage: this prefix is owned by the application user
+# so T3's in-UI provider updates work, while T3 itself stays root-owned.
+ARG PROVIDER_PREFIX=/opt/t3-providers
 
 LABEL org.opencontainers.image.title="T3 Code for Unraid" \
       org.opencontainers.image.description="Tailscale-hook-compatible T3 Code server with a non-root application runtime" \
@@ -109,15 +124,22 @@ RUN set -eux; \
     chown -R t3:t3 /home/t3 /workspace
 
 COPY --from=toolchain /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
+# Providers are copied with application-user ownership so T3 can update them in
+# place from the UI. The writable prefix is deliberately NOT placed on PATH:
+# the Unraid Tailscale hook runs as root with this image's environment, so a
+# PATH entry the application can write would let it shadow a binary that root
+# executes. Root-owned symlinks in /usr/local/bin point into the prefix instead.
+COPY --from=toolchain --chown=10000:10000 /opt/t3-providers/ /opt/t3-providers/
 COPY --from=toolchain /usr/local/bin/gh /usr/local/bin/gh
 COPY --from=toolchain /opt/ollama/bin/ollama /usr/local/bin/ollama
 
 RUN set -eux; \
     ln -s ../lib/node_modules/t3/bin/t3.js /usr/local/bin/t3; \
-    ln -s ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex; \
-    ln -s ../lib/node_modules/opencode-ai/bin/opencode.exe /usr/local/bin/opencode; \
-    node -e "const expected=[['/usr/local/lib/node_modules/t3/package.json',process.argv[1]],['/usr/local/lib/node_modules/@openai/codex/package.json',process.argv[2]],['/usr/local/lib/node_modules/opencode-ai/package.json',process.argv[3]]]; for (const [file,want] of expected) { const got=require(file).version; if (got !== want) throw new Error(file + ': expected ' + want + ', got ' + got); }" \
-        "${T3_VERSION}" "${CODEX_VERSION}" "${OPENCODE_VERSION}"; \
+    ln -s "${PROVIDER_PREFIX}/bin/codex" /usr/local/bin/codex; \
+    ln -s "${PROVIDER_PREFIX}/bin/opencode" /usr/local/bin/opencode; \
+    node -e "const prefix=process.argv[1]; const expected=[['/usr/local/lib/node_modules/t3/package.json',process.argv[2]],[prefix+'/lib/node_modules/@openai/codex/package.json',process.argv[3]],[prefix+'/lib/node_modules/opencode-ai/package.json',process.argv[4]]]; for (const [file,want] of expected) { const got=require(file).version; if (got !== want) throw new Error(file + ': expected ' + want + ', got ' + got); }" \
+        "${PROVIDER_PREFIX}" "${T3_VERSION}" "${CODEX_VERSION}" "${OPENCODE_VERSION}"; \
+    node -e "const fs=require('fs'); const st=fs.statSync(process.argv[1]); if (st.uid !== 10000 || st.gid !== 10000) throw new Error(process.argv[1] + ' must be owned by 10000:10000 for in-UI provider updates; got ' + st.uid + ':' + st.gid);" "${PROVIDER_PREFIX}/lib/node_modules"; \
     node -e "const out=require('node:child_process').execFileSync('gh',['version'],{encoding:'utf8'}); if (!out.startsWith('gh version ' + process.argv[1] + ' ')) throw new Error('unexpected gh version: ' + out);" "${GH_VERSION}"; \
     ollama --version | grep -F "${OLLAMA_VERSION}"
 

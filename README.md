@@ -18,10 +18,10 @@ No remote `latest` tag is used. The direct tool versions are pinned as follows:
 | --- | --- |
 | Node.js | `node:22-bookworm-slim` family |
 | T3 Code (`t3`) | `0.0.42` |
-| Codex CLI (`@openai/codex`) | `0.154.0` |
+| Codex CLI (`@openai/codex`) | `0.155.0` |
 | OpenCode CLI (`opencode-ai`) | `1.18.31` |
 | GitHub CLI (`gh`) | `2.101.0` |
-| Ollama Cloud client (`ollama`) | `0.34.1` |
+| Ollama Cloud client (`ollama`) | `0.34.2` |
 
 From `t3` `0.0.41` onward the npm package ships a launcher at `bin/t3.js` and
 resolves its platform binary from `@t3code/t3-<platform>-<arch>`. The image links
@@ -34,11 +34,30 @@ The GitHub CLI and Ollama client archives are selected for Debian `amd64` or `ar
 ## Runtime contract
 
 - The Unraid Tailscale hook starts as root because it must initialize Tailscale. The image entrypoint then immediately drops privileges and runs T3 as `t3` (UID/GID `10000:10000`, matching the `hermes` appdata owner on this Unraid host).
+- The root phase of the entrypoint deliberately resets `PATH` before `exec gosu`. The image ships no user-writable directory on `PATH`, and the reset keeps it that way even if a caller passes one in the environment. Without it, anything able to write to such a directory could shadow a binary that the root context executes. Do not remove that reset.
 - `/workspace` is the expected project bind mount and the container working directory.
 - `T3_PORT` controls both the T3 listener and the health check; its default is `9877`.
 - T3 binds to `0.0.0.0` **inside the container** so Docker bridge port publishing can reach it.
 - The entrypoint uses `exec`, so T3 receives `SIGTERM` and `SIGINT` directly.
 - The built-in health check probes `http://127.0.0.1:${T3_PORT}/` from inside the container.
+
+## Package layout and provider self-updates
+
+The image separates code it ships from code the application maintains:
+
+| Location | Owner | Contents | Updated by |
+| --- | --- | --- | --- |
+| `/usr/local/lib/node_modules/t3` | `root` | T3 Code itself | A new image, through the Unraid Docker template |
+| `/opt/t3-providers` | `10000:10000` | Codex CLI, OpenCode CLI | T3's **Update** button, or a new image |
+
+`/opt/t3-providers` is reached through root-owned symlinks in `/usr/local/bin` (`codex`, `opencode`), so the providers are on `PATH` while the writable prefix itself is **not**. That matters: the Unraid Tailscale hook runs as root with this image's environment, so putting a directory the application can write on `PATH` would let it shadow a binary that root executes. Its `/bin` holds the usual npm shims. T3 identifies a provider's install prefix by matching `/lib/node_modules/<package>/` inside the resolved real path of the provider binary, so this layout is detected as an npm-global install that T3 is allowed to update. It then runs `npm install -g --prefix /opt/t3-providers <package>@latest`, which writes both the package and its shim inside that prefix.
+
+T3 itself stays root-owned and is intentionally **not** self-updatable: `t3 update` and the provider mechanism both write to a global prefix, and letting the running application replace its own binaries would silently diverge the container from its pinned versions. Ship T3 changes as an image bump.
+
+Two root-owned paths are worth knowing about when diagnosing a failed update, because they fail differently:
+
+- A root-owned `~/.npm` cache reports `npm error Your cache folder contains root-owned files`.
+- A root-owned install prefix reports `EACCES` on `mkdir`, which surfaces in the T3 UI as **"Update command exited with code 243."** `243` is `256 - 13`, i.e. `EACCES` masked to the low 8 bits — not a T3-specific code.
 
 The runtime paths are explicit:
 
