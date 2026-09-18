@@ -63,8 +63,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) ollama_arch=amd64; ollama_sha256=f361dc3992ec07e4ad429f4bb2d10d4663ba2c295f9a9a688c7d52f4ba650034 ;; \
-        arm64) ollama_arch=arm64; ollama_sha256=b4bdbbbf5faf2fc15f9f6d775c984a33d5c6fee7b4fdeb3fb56612e58a172db9 ;; \
+        amd64) ollama_arch=amd64; ollama_sha256=e155b83589986d2c581fdbf1381ea3ebdb16549883679cd5a0627f7cdc05b12b ;; \
+        arm64) ollama_arch=arm64; ollama_sha256=8edcfe99eb7546d9422cfa8297d341dcd50e090e192ce1a8092a6ab6d182867b ;; \
         *) echo "Unsupported architecture for Ollama CLI: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="ollama-linux-${ollama_arch}.tar.zst"; \
