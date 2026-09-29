@@ -2,11 +2,11 @@
 
 FROM node:22-bookworm-slim AS toolchain
 
-ARG T3_VERSION=0.0.42
-ARG CODEX_VERSION=0.155.0
-ARG OPENCODE_VERSION=1.18.31
+ARG T3_VERSION=0.0.43
+ARG CODEX_VERSION=0.159.0
+ARG OPENCODE_VERSION=1.18.33
 ARG GH_VERSION=2.101.0
-ARG OLLAMA_VERSION=0.34.2
+ARG OLLAMA_VERSION=0.34.4
 
 # Providers (codex, opencode) live in a dedicated prefix owned by the
 # application user so T3's in-UI provider updates can run. T3 itself stays in
@@ -63,8 +63,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) ollama_arch=amd64; ollama_sha256=e155b83589986d2c581fdbf1381ea3ebdb16549883679cd5a0627f7cdc05b12b ;; \
-        arm64) ollama_arch=arm64; ollama_sha256=8edcfe99eb7546d9422cfa8297d341dcd50e090e192ce1a8092a6ab6d182867b ;; \
+        amd64) ollama_arch=amd64; ollama_sha256=c238986e61d40c0cc5f4a9b9e40b9eea104350b77efa34741fc134e105cb9533 ;; \
+        arm64) ollama_arch=arm64; ollama_sha256=96f50a1192133028cf4e010d8c333f8af14b1505db6be7b2034c11487e7fd7e6 ;; \
         *) echo "Unsupported architecture for Ollama CLI: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="ollama-linux-${ollama_arch}.tar.zst"; \
@@ -79,11 +79,11 @@ RUN set -eux; \
 
 FROM node:22-bookworm-slim AS runtime
 
-ARG T3_VERSION=0.0.42
-ARG CODEX_VERSION=0.155.0
-ARG OPENCODE_VERSION=1.18.31
+ARG T3_VERSION=0.0.43
+ARG CODEX_VERSION=0.159.0
+ARG OPENCODE_VERSION=1.18.33
 ARG GH_VERSION=2.101.0
-ARG OLLAMA_VERSION=0.34.2
+ARG OLLAMA_VERSION=0.34.4
 
 # Must match the toolchain stage: this prefix is owned by the application user
 # so T3's in-UI provider updates work, while T3 itself stays root-owned.

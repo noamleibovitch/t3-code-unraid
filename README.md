@@ -9,7 +9,7 @@ This directory is a local Docker build context for a headless T3 Code server. It
 Example build on a Docker-capable host:
 
 ```sh
-docker build --tag t3-code-unraid:0.0.42 /opt/data/t3-code-unraid
+docker build --tag t3-code-unraid:0.0.43 /opt/data/t3-code-unraid
 ```
 
 No remote `latest` tag is used. The direct tool versions are pinned as follows:
@@ -17,11 +17,11 @@ No remote `latest` tag is used. The direct tool versions are pinned as follows:
 | Component | Pinned version/source |
 | --- | --- |
 | Node.js | `node:22-bookworm-slim` family |
-| T3 Code (`t3`) | `0.0.42` |
-| Codex CLI (`@openai/codex`) | `0.155.0` |
-| OpenCode CLI (`opencode-ai`) | `1.18.31` |
+| T3 Code (`t3`) | `0.0.43` |
+| Codex CLI (`@openai/codex`) | `0.159.0` |
+| OpenCode CLI (`opencode-ai`) | `1.18.33` |
 | GitHub CLI (`gh`) | `2.101.0` |
-| Ollama Cloud client (`ollama`) | `0.34.2` |
+| Ollama Cloud client (`ollama`) | `0.34.4` |
 
 From `t3` `0.0.41` onward the npm package ships a launcher at `bin/t3.js` and
 resolves its platform binary from `@t3code/t3-<platform>-<arch>`. The image links
