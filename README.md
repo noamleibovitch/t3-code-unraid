@@ -4,24 +4,24 @@ This directory is a local Docker build context for a headless T3 Code server. It
 
 ## Build boundary
 
-**This image must be built on the Unraid host or in CI.** The agent that prepared these files has no Docker socket or documented image-build API, so it did not build an image or create a container.
+**Build this image on a Docker-capable host or in CI.** The GitHub Actions workflow is the preferred publication path and does not require a Docker socket on Hermes or Unraid.
 
 Example build on a Docker-capable host:
 
 ```sh
-docker build --tag t3-code-unraid:0.0.43 /opt/data/t3-code-unraid
+docker build --pull --no-cache --tag t3-code-unraid:0.0.45 /opt/data/t3-code-unraid
 ```
 
 No remote `latest` tag is used. The direct tool versions are pinned as follows:
 
 | Component | Pinned version/source |
 | --- | --- |
-| Node.js | `node:22-bookworm-slim` family |
-| T3 Code (`t3`) | `0.0.43` |
-| Codex CLI (`@openai/codex`) | `0.159.0` |
-| OpenCode CLI (`opencode-ai`) | `1.18.33` |
-| GitHub CLI (`gh`) | `2.101.0` |
-| Ollama Cloud client (`ollama`) | `0.34.4` |
+| Node.js | `node:24-bookworm-slim` (latest supported LTS major) |
+| T3 Code (`t3`) | `0.0.45` |
+| Codex CLI (`@openai/codex`) | `0.160.0` |
+| OpenCode CLI (`opencode-ai`) | `1.18.34` |
+| GitHub CLI (`gh`) | `2.102.0` |
+| Ollama Cloud client (`ollama`) | `0.35.1` |
 
 From `t3` `0.0.41` onward the npm package ships a launcher at `bin/t3.js` and
 resolves its platform binary from `@t3code/t3-<platform>-<arch>`. The image links
@@ -104,7 +104,7 @@ An end-to-end validation still requires a Docker-capable Unraid host or CI runne
 
 ## CI build and Docker upgrade path
 
-This build context includes `.github/workflows/build-ghcr.yml`, a pinned-action GitHub Actions workflow that builds the image with Buildx on pushes to `main` (or a manual run), publishes an OCI image to GitHub Container Registry, and records the immutable digest. It does not require a Docker socket on Hermes or Unraid.
+This build context includes `.github/workflows/build-ghcr.yml`, a pinned-action GitHub Actions workflow that builds the image with Buildx on pushes to `main` (or a manual run), publishes an OCI image to GitHub Container Registry, and records the immutable digest. The build always pulls the current base image and bypasses layer cache so Debian package indexes and installed packages are refreshed. It does not require a Docker socket on Hermes or Unraid.
 
 To use this route, create a **private** GitHub repository containing this directory as its repository root, push `main`, and approve GitHub authentication from the interactive device flow when prompted. The workflow uses its short-lived `GITHUB_TOKEN`; no registry password is stored in this repository. Once the first image is published, set package visibility/permissions so the Unraid Docker daemon can pull it, then deploy by the digest through the separately approved UnraidClaw create operation.
 

@@ -3,7 +3,7 @@
 // start on THIS base image.
 //
 // Rationale (regression observed in production): T3 0.0.42's linux-x64 binary
-// links libatomic.so.1, which node:22-bookworm-slim does not ship. Because
+// links libatomic.so.1, which the slim Node base did not ship at the time. Because
 // nothing at build time executed the real binary, the image built and published
 // successfully while the container exited 127 on start:
 //   ".../@t3code/t3-linux-x64/t3: error while loading shared libraries:
