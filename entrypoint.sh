@@ -56,8 +56,26 @@ mkdir -p \
     "${XDG_STATE_HOME}" \
     "${T3CODE_HOME}"
 
-# exec makes T3 PID 1 so SIGTERM/SIGINT reach it directly.
-exec t3 serve \
+# The npm launcher uses spawnSync, so exec'ing `t3` would leave Node as PID 1
+# and the native server as its child. Resolve and exec the packaged native
+# binary instead so SIGTERM/SIGINT reach the server directly.
+t3_native="$(
+    node -e '
+const { createRequire } = require("node:module");
+const { dirname, join } = require("node:path");
+const packageRequire = createRequire("/usr/local/lib/node_modules/t3/package.json");
+const key = `${process.platform}-${process.arch}`;
+const packageDir = dirname(packageRequire.resolve(`@t3code/t3-${key}/package.json`));
+process.stdout.write(join(packageDir, process.platform === "win32" ? "t3.exe" : "t3"));
+'
+)"
+
+if [ ! -x "${t3_native}" ]; then
+    echo "Resolved T3 native binary is not executable: ${t3_native}" >&2
+    exit 127
+fi
+
+exec "${t3_native}" serve \
     --host 0.0.0.0 \
     --port "${T3_PORT}" \
     --base-dir "${T3CODE_HOME}" \

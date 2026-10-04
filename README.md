@@ -38,7 +38,7 @@ The GitHub CLI and Ollama client archives are selected for Debian `amd64` or `ar
 - `/workspace` is the expected project bind mount and the container working directory.
 - `T3_PORT` controls both the T3 listener and the health check; its default is `9877`.
 - T3 binds to `0.0.0.0` **inside the container** so Docker bridge port publishing can reach it.
-- The entrypoint uses `exec`, so T3 receives `SIGTERM` and `SIGINT` directly.
+- The entrypoint resolves and `exec`s T3's packaged native binary rather than its npm launcher, so the server is PID 1 and receives `SIGTERM` and `SIGINT` directly.
 - The built-in health check probes `http://127.0.0.1:${T3_PORT}/` from inside the container.
 
 ## Package layout and provider self-updates
