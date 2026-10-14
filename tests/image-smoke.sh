@@ -16,7 +16,9 @@
 # It fails on: early container exit, startup timeout, wrong PID 1 ownership,
 # a non-native T3 PID 1, a provider prefix that is not writable by the app
 # user, root-owned launch paths that are not root-owned, provider CLI failure
-# as the app user, or a shutdown that requires SIGKILL/OOM termination.
+# as the app user, a premature self-exit before the signal we send, or a
+# shutdown that requires SIGKILL/OOM termination or any other bounded outcome.
+# A bounded, signal-driven shutdown is accepted with exit 0, 130, or 143.
 set -euo pipefail
 
 if [ "$#" -eq 1 ] && [ "$1" = --self-test ]; then
@@ -62,6 +64,11 @@ def accepted_status_range(text):
 repo_root = Path(sys.argv[1]).resolve().parents[1]
 assert accepted_status_range(Path(sys.argv[1]).read_text()) == \
     accepted_status_range((repo_root / "healthcheck.sh").read_text()) == (200, 500)
+
+# A cold pull must never be charged against the smoke's per-call Docker budget:
+# the container is always started from the copy the CI step already fetched.
+assert "--pull=never" in Path(sys.argv[1]).read_text(), \
+    "smoke docker run must use --pull=never"
 
 candidate, image, config, provenance, sbom, promoted = ["sha256:" + c * 64 for c in "abcdef"]
 def descriptor(digest, size, arch="unknown", **annotations):
@@ -171,6 +178,10 @@ else:
     # to run unless the pull already recorded the exact IMAGE_REF, which proves
     # the pull is ordered before the smoke (and the pull failure is fatal).
     smoke = "Run bounded image smoke test"
+    # The CI step must bound-pull the exact candidate IMAGE_REF before the
+    # smoke script runs, so a cold registry pull can never run unbounded.
+    assert re.search(r'timeout\s+[0-9]+\s+docker\s+pull\s+"\$\{IMAGE_REF\}"', steps[smoke]), \
+        "smoke step must bound-pull the exact IMAGE_REF"
     (root / "tests").mkdir()
     (root / "tests" / "image-smoke.sh").write_text('''#!/usr/bin/env bash
 set -euo pipefail
@@ -187,7 +198,104 @@ echo "SMOKE_IMAGE_ID=${SMOKE_IMAGE_ID}"
     promote = "Promote verified candidate to stable"
     run(promote)
     run(promote, False, "promotion")
-print("PASS: 24 offline release-gate cases (split attestations, missing evidence, descriptor multiset, bounded pre-pull ordering, smoke-to-manifest binding, promotion errors, readiness/healthcheck parity)")
+
+    # Offline fixtures for the smoke script's own SIGTERM classification. A fake
+    # `docker` drives the real script so the accepted/rejected shutdown outcomes
+    # are regression-tested without Docker or a registry. Pinned Effect
+    # 4.0.0-rc.115 maps both SIGINT and SIGTERM to interruption and exits 130,
+    # so a bounded 130 must be accepted, while a premature self-exit 130 (before
+    # the signal is sent) and a forced SIGKILL (137) must still be rejected.
+    smoke_script = Path(sys.argv[1]).resolve()
+    with tempfile.TemporaryDirectory(prefix="t3-smoke-shutdown-tests-") as shutdown_root:
+        shutdown = Path(shutdown_root)
+        fake = shutdown / "docker"
+        fake.write_text('''#!/usr/bin/env python3
+import os, pathlib, sys, time
+state = pathlib.Path(os.environ["SMOKE_STATE"])
+args = sys.argv[1:]
+def read(key, default=""):
+    path = state / key
+    return path.read_text() if path.exists() else default
+def write(key, value):
+    (state / key).write_text(value)
+if args[0] == "run":
+    write("running", "true")
+    write("ready_seen", "false")
+    write("killed", "false")
+    write("exit_code", os.environ["SMOKE_EXIT"])
+    sys.exit(0)
+if args[0] == "exec":
+    joined = " ".join(args)
+    if "http://127.0.0.1:" in joined:
+        write("ready_seen", "true")
+        sys.exit(0)
+    if "/proc/1/status" in joined:
+        sys.stdout.write("Uid:\\t10000\\t10000\\t10000\\t10000\\nGid:\\t10000\\t10000\\t10000\\t10000\\n")
+        sys.exit(0)
+    if "/proc/1/exe" in joined:
+        sys.stdout.write("/usr/local/lib/node_modules/@t3code/t3-linux-x64/t3\\n")
+        sys.exit(0)
+    if "stat" in args:
+        sys.stdout.write("0:0\\n")
+        sys.exit(0)
+    sys.exit(0)
+if args[0] == "inspect":
+    joined = " ".join(args)
+    if ".State.Running" in joined:
+        # A late-ready container: model post-readiness checks that outlive the
+        # startup deadline, so the pre-signal running check must not inherit it.
+        slow = os.environ.get("SMOKE_SLOW_RUNNING_INSPECT", "")
+        if slow and read("ready_seen") == "true":
+            time.sleep(float(slow))
+        running = read("running", "true")
+        if (os.environ["SMOKE_SCENARIO"] == "premature130"
+                and read("ready_seen") == "true" and read("killed") != "true"):
+            running = "false"
+        sys.stdout.write(running + "\\n")
+        sys.exit(0)
+    if ".Image" in joined:
+        sys.stdout.write(os.environ["SMOKE_IMAGE"] + "\\n")
+        sys.exit(0)
+    if ".State.ExitCode" in joined:
+        sys.stdout.write(read("exit_code", "0") + "\\n")
+        sys.exit(0)
+    if ".State.OOMKilled" in joined:
+        sys.stdout.write("false\\n")
+        sys.exit(0)
+    sys.stdout.write("{}\\n")
+    sys.exit(0)
+if args[0] == "kill":
+    write("killed", "true")
+    write("running", "false")
+    sys.exit(0)
+sys.exit(0)
+''')
+        fake.chmod(0o755)
+        mock_image = "sha256:" + "d" * 64
+        def smoke_case(scenario, exit_code, expect_success, expect_message,
+                       start_deadline="10", extra_env=None):
+            state = shutdown / ("state-" + scenario)
+            state.mkdir()
+            env = dict(os.environ, PATH=str(shutdown) + os.pathsep + os.environ["PATH"],
+                       SMOKE_STATE=str(state), SMOKE_SCENARIO=scenario, SMOKE_EXIT=str(exit_code),
+                       SMOKE_IMAGE=mock_image, SMOKE_START_DEADLINE=start_deadline,
+                       SMOKE_STOP_DEADLINE="10", **(extra_env or {}))
+            result = subprocess.run(["bash", str(smoke_script), "ghcr.io/test/t3@" + mock_image],
+                                    env=env, capture_output=True, text=True, timeout=30)
+            assert (result.returncode == 0) == expect_success, (scenario, result.stdout, result.stderr)
+            if expect_message:
+                assert expect_message in result.stderr, (scenario, result.stderr)
+            else:
+                assert "SMOKE_IMAGE_ID=" + mock_image in result.stdout, result.stdout
+        smoke_case("accept130", 130, True, None)
+        smoke_case("premature130", 130, False, "before the smoke sent SIGTERM")
+        smoke_case("forced137", 137, False, "exit 137")
+        # A slow start whose post-readiness checks outlive START_DEADLINE must not
+        # be misread as a premature exit: the pre-signal running check has its own
+        # fresh per-call bound, independent of the expired startup deadline.
+        smoke_case("lateReady", 130, True, None, start_deadline="1",
+                   extra_env={"SMOKE_SLOW_RUNNING_INSPECT": "1.5"})
+print("PASS: 28 offline release-gate cases (split attestations, missing evidence, descriptor multiset, bounded pre-pull ordering, smoke-to-manifest binding, promotion errors, readiness/healthcheck parity, bounded SIGTERM exit classification, deadline-independent pre-signal running check)")
 PY
 fi
 
@@ -362,6 +470,15 @@ app_exec t3 --version >/dev/null || fail "t3 launcher failed to run as ${APP_UID
 # to the exact inspected manifest configuration digest.
 image_id="$(docker_cmd inspect --format '{{.Image}}' "${CONTAINER}")"
 
+# Reject a container that already exited on its own before we send SIGTERM.
+# Only a shutdown driven by the signal we send may be accepted, so a premature
+# self-exit (including an early exit 130) is not mistaken for a handled SIGTERM.
+# This uses docker_cmd, not docker_until: the readiness loop's startup deadline
+# is intentionally stale here, and reusing it would report a still-running
+# container as a premature exit once the post-readiness checks outlive it.
+[ "$(docker_cmd inspect --format '{{.State.Running}}' "${CONTAINER}")" = "true" ] \
+    || fail "container exited before the smoke sent SIGTERM (premature exit)"
+
 # Normal SIGTERM must stop the container within the deadline without a forced
 # SIGKILL (exit 137) or an OOM kill.
 docker_cmd kill --signal=TERM "${CONTAINER}" >/dev/null
@@ -381,8 +498,13 @@ exit_code="$(docker_cmd inspect --format '{{.State.ExitCode}}' "${CONTAINER}")"
 oom_killed="$(docker_cmd inspect --format '{{.State.OOMKilled}}' "${CONTAINER}")"
 [ "${oom_killed}" = "false" ] || fail "container was OOM-killed on shutdown"
 [ "${exit_code}" != "137" ] || fail "container was force-killed (exit 137) instead of handling SIGTERM"
+# Accept only a bounded, signal-driven shutdown. 0 is a clean exit, 143 is a raw
+# SIGTERM termination, and 130 is an Effect interruption: pinned Effect
+# 4.0.0-rc.115 maps BOTH SIGINT and SIGTERM to interruption and its
+# defaultTeardown calls onExit(130) when the cause has interrupts only. Any
+# other code, including 137/SIGKILL, remains a failure.
 case "${exit_code}" in
-    0|143) ;;
+    0|130|143) ;;
     *) fail "container exited abnormally after SIGTERM (exit ${exit_code})" ;;
 esac
 
