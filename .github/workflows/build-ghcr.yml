@@ -8,6 +8,7 @@ on:
       - entrypoint.sh
       - healthcheck.sh
       - check-runtime-deps.mjs
+      - tests/image-smoke.sh
       - .dockerignore
       - .github/workflows/build-ghcr.yml
   workflow_dispatch:
@@ -32,6 +33,9 @@ jobs:
       - name: Check out build context
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Test release gates offline
+        run: bash tests/image-smoke.sh --self-test
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -42,7 +46,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      # Build and publish the candidate only. `stable` is promoted in a gated
+      # step after inspection and the runtime smoke test both pass, so a failed
+      # build never moves the public channel.
+      - name: Build and push candidate
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -52,7 +59,6 @@ jobs:
           no-cache: true
           platforms: linux/amd64
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:stable
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -60,5 +66,128 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - name: Report immutable image digest
-        run: echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      # Inspect the candidate by its index digest and record every descriptor.
+      # The build output digest already carries the `sha256:` prefix.
+      - name: Inspect candidate index
+        id: inspect_candidate
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw "${IMAGE_REF}" > candidate-index.json
+          cat candidate-index.json
+
+          # Require one amd64 image and well-formed image/attestation descriptors.
+          jq -e '
+            .schemaVersion == 2 and
+            (.manifests | type == "array" and length >= 2) and
+            all(.manifests[];
+              (.digest | test("^sha256:[0-9a-f]{64}$")) and
+              (.mediaType == "application/vnd.oci.image.manifest.v1+json" or
+               .mediaType == "application/vnd.docker.distribution.manifest.v2+json") and
+              (.size | type == "number" and . > 0) and
+              (.platform.os | type == "string") and
+              (.platform.architecture | type == "string")) and
+            ([.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64")] | length == 1)
+          ' candidate-index.json >/dev/null
+          amd64_manifest_digest="$(jq -er '.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64") | .digest' candidate-index.json)"
+
+          # Record the selected amd64 manifest's configuration digest.
+          docker buildx imagetools inspect --raw "${REGISTRY}/${IMAGE_NAME}@${amd64_manifest_digest}" > candidate-amd64.json
+          config_digest="$(jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))' candidate-amd64.json)"
+          printf '%s\n' "${config_digest}" > candidate-config-digest.txt
+
+          # BuildKit may put provenance and SBOM in separate attestation manifests.
+          jq -er --arg d "${amd64_manifest_digest}" '
+            .manifests[] | select(
+              .platform.os=="unknown" and .platform.architecture=="unknown" and
+              .annotations["vnd.docker.reference.digest"]==$d and
+              .annotations["vnd.docker.reference.type"]=="attestation-manifest") | .digest
+          ' candidate-index.json > candidate-attestation-digests.txt
+          : > candidate-predicate-types.jsonl
+          while IFS= read -r attestation_digest; do
+            docker buildx imagetools inspect --raw "${REGISTRY}/${IMAGE_NAME}@${attestation_digest}" > candidate-attestation.json
+            jq -c '.layers[] | .annotations["in-toto.io/predicate-type"] // empty' candidate-attestation.json >> candidate-predicate-types.jsonl
+          done < candidate-attestation-digests.txt
+          jq -se 'any(.[]; . == "https://slsa.dev/provenance/v0.2" or . == "https://slsa.dev/provenance/v1")' candidate-predicate-types.jsonl >/dev/null
+          jq -se 'any(.[]; . == "https://spdx.dev/Document")' candidate-predicate-types.jsonl >/dev/null
+
+          # Canonical, order-independent descriptor multiset for later comparison.
+          jq -cS '.manifests[]' candidate-index.json | LC_ALL=C sort > candidate-descriptors.jsonl
+
+          echo "candidate index digest: ${{ steps.build.outputs.digest }}"
+          echo "amd64 manifest digest: ${amd64_manifest_digest}"
+          echo "amd64 config digest: ${config_digest}"
+          {
+            echo "candidate_index_digest=${{ steps.build.outputs.digest }}"
+            echo "amd64_manifest_digest=${amd64_manifest_digest}"
+            echo "config_digest=${config_digest}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Run the bounded runtime smoke test against the exact candidate digest
+      # and require the smoke container to be the inspected amd64 manifest.
+      - name: Run bounded image smoke test
+        id: smoke
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # Pull the exact candidate digest once, under its own bounded deadline,
+          # before the smoke script runs. A cold registry pull can far exceed the
+          # smoke's 15s per-Docker-call budget, so it must not happen inside the
+          # script; the smoke then runs with --pull=never against this local copy.
+          timeout 600 docker pull "${IMAGE_REF}"
+          bash "$GITHUB_WORKSPACE/tests/image-smoke.sh" "${IMAGE_REF}" | tee smoke-output.txt
+          smoke_image_id="$(sed -n 's/^SMOKE_IMAGE_ID=//p' smoke-output.txt)"
+          [[ "${smoke_image_id}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          expected_config_digest="$(cat candidate-config-digest.txt)"
+          if [ "${smoke_image_id}" != "${expected_config_digest}" ]; then
+            echo "smoke container image id ${smoke_image_id} != inspected amd64 config digest ${expected_config_digest}" >&2
+            exit 1
+          fi
+          echo "smoke image id: ${smoke_image_id}"
+          echo "smoke_image_id=${smoke_image_id}" >> "$GITHUB_OUTPUT"
+
+      # --- Release mutation boundary. Everything above must pass first. ---
+      - name: Promote verified candidate to stable
+        id: promote
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          trap 'echo "::error::Promotion failed; stable may already have moved. Coordinator must investigate using preserved rollback references." >&2' ERR
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${IMAGE_NAME}:stable" \
+            "${IMAGE_REF}"
+
+      # After promotion, `stable` may already have moved. A failure here fails
+      # the job and requires coordinator investigation; it does not by itself
+      # mean `stable` is unchanged.
+      - name: Verify promoted stable descriptors match candidate
+        run: |
+          set -euo pipefail
+          trap 'echo "::error::Post-promotion verification failed; stable may already have moved. Coordinator must investigate using preserved rollback references." >&2' ERR
+          stable_ref="${REGISTRY}/${IMAGE_NAME}:stable"
+          promoted_index_digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${stable_ref}")"
+          [[ "${promoted_index_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "candidate index digest: ${{ steps.build.outputs.digest }}"
+          echo "promoted stable index digest: ${promoted_index_digest}"
+          {
+            echo "Candidate index digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "Promoted stable index digest: \`${promoted_index_digest}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Inspect the resolved digest so a concurrent tag change cannot mix indexes.
+          docker buildx imagetools inspect --raw "${REGISTRY}/${IMAGE_NAME}@${promoted_index_digest}" > stable-index.json
+          jq -cS '.manifests[]' stable-index.json | LC_ALL=C sort > stable-descriptors.jsonl
+          diff -u candidate-descriptors.jsonl stable-descriptors.jsonl
+
+          {
+            echo "## T3 Code image promoted"
+            echo ""
+            echo "- Candidate index digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- Promoted stable index digest: \`${promoted_index_digest}\`"
+            echo "- Smoke image id: \`${{ steps.smoke.outputs.smoke_image_id }}\`"
+            echo "- amd64 manifest digest: \`${{ steps.inspect_candidate.outputs.amd64_manifest_digest }}\`"
+            echo "- amd64 config digest: \`${{ steps.inspect_candidate.outputs.config_digest }}\`"
+            echo "- Immutable candidate ref: \`${REGISTRY}/${IMAGE_NAME}:sha-${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
