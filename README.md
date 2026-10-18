@@ -9,29 +9,45 @@ This directory is a local Docker build context for a headless T3 Code server. It
 Example build on a Docker-capable host:
 
 ```sh
-docker build --pull --no-cache --tag t3-code-unraid:0.0.45 /opt/data/t3-code-unraid
+docker build --pull --no-cache --tag t3-code-unraid:0.1.0 /opt/data/t3-code-unraid
 ```
 
 No remote `latest` tag is used. The direct tool versions are pinned as follows:
 
 | Component | Pinned version/source |
 | --- | --- |
-| Node.js | `node:24-bookworm-slim` (latest supported LTS major) |
-| T3 Code (`t3`) | `0.0.45` |
-| Codex CLI (`@openai/codex`) | `0.162.1` |
-| OpenCode CLI (`opencode-ai`) | `1.19.0` |
+| Node.js | `node:24-bookworm-slim` (latest supported LTS major; a refreshed build resolves Node `24.22.0` with bundled npm `11.19.1`) |
+| T3 Code (`t3`) | `0.1.0` |
+| Codex CLI (`@openai/codex`) | `0.163.0` |
+| OpenCode CLI (`opencode-ai`) | `1.19.3` |
 | GitHub CLI (`gh`) | `2.102.0` |
-| Ollama Cloud client (`ollama`) | `0.40.4` |
+| Ollama Cloud client (`ollama`) | `0.40.6` |
 
-From `t3` `0.0.41` onward the npm package ships a launcher at `bin/t3.js` and
-resolves its platform binary from `@t3code/t3-<platform>-<arch>`. The image links
-`/usr/local/bin/t3` to that launcher; the older `dist/bin.mjs` path still exists
-but is no longer the declared entry point. Version pins are asserted in both
-build stages, so a mismatch fails the image build instead of shipping silently.
+The base stays on the Node 24 LTS line. Building with `--pull`/`no-cache` (as the
+CI workflow does) refreshes it to Node `24.22.0`, bundled npm `11.19.1`, and
+current Debian security packages, such as the bookworm jq security update
+`1.6-2.1+deb12u3`. Those are expected build-time resolutions, not versions
+exercised by the offline checks in this source session; the CI image build is
+where they are installed and tested.
 
-The GitHub CLI and Ollama client archives are selected for Debian `amd64` or `arm64` and checked against release SHA-256 values before installation. The final image contains only the Ollama client binary: it does not run a local Ollama server, include model storage, or require a GPU.
+T3 `0.1.0` ships a launcher at `bin/t3.js` and resolves its platform binary from
+`@t3code/t3-<platform>-<arch>`. The image keeps the complete `t3` npm package,
+including those sibling platform assets, because extracting only the executable
+without them fails to start. It links `/usr/local/bin/t3` to the launcher; the
+older `dist/bin.mjs` path still exists but is no longer the declared entry point.
+Version pins are asserted in both build stages, so a mismatch fails the image
+build instead of shipping silently.
 
-The refresh uses the supplied release evidence dated 2026-10-14 (`.workflow-kit/release-evidence.json` and `.workflow-kit/context/verified-releases.md`). No downloads were performed in the network-disabled implementation session. Official archive availability and downloaded-byte checksum verification remain release prerequisites; the Dockerfile fails closed on either a download or checksum error. CI builds amd64 only, so the arm64 archive still needs separate verification before claiming arm64 support.
+The GitHub CLI and Ollama client archives are selected for Debian `amd64` or `arm64` and checked against release SHA-256 values before installation. The Ollama `0.40.6` hashes below were verified against both the GitHub release assets and the release's official `sha256sum.txt`, and the archive name remains `ollama-linux-ARCH.tar.zst`:
+
+| Ollama archive | SHA-256 |
+| --- | --- |
+| `ollama-linux-amd64.tar.zst` | `c164ab8b1b28e2a247c29719b8e404c423c5b83ae64c3ab4e59d50c7ff7fc5e0` |
+| `ollama-linux-arm64.tar.zst` | `0a279d9428ad17b06fdb7dddf3b059b2c148433585fa3b30676a102fc459bb9f` |
+
+CI downloads and checks the archive bytes during the image build, and the Dockerfile fails closed on a download or checksum error. The final image contains only the Ollama client binary: it does not run a local Ollama server, include model storage, or require a GPU.
+
+The refresh uses the supplied release evidence dated 2026-10-18 (`.workflow-kit/release-evidence.json` and `.workflow-kit/CLI-COMPATIBILITY.json`). No downloads or Docker builds were performed in the network-disabled implementation session. Official archive availability and downloaded-byte checksum verification remain release prerequisites. CI builds amd64 only, so the arm64 archive checksum is verified but no arm64 image build or runtime has been validated; arm64 support still needs separate image verification before it is claimed.
 
 ## Runtime contract
 
@@ -81,9 +97,10 @@ Some tools audited alongside this image live in the **persistent home**, not in 
 
 | Tool | Authority |
 | --- | --- |
-| pnpm 9 | persistent home (`$HOME/.local`), applied by the coordinator after review |
-| uv | persistent home, applied by the coordinator after review |
-| managed Python 3.12 | persistent home, managed through uv |
+| pnpm | persistent home (`$HOME/.local`), applied by the coordinator after review; observed `12.11.2`, target `12.14.0` |
+| ripgrep (`rg`) | persistent home, applied by the coordinator after review; observed `15.0.0`, target `15.2.0` |
+| uv | persistent home, applied by the coordinator after review; current `0.13.1` |
+| managed Python 3.12 | persistent home, managed through uv; current `3.12.15` |
 | Tailscale | installed and owned by the Unraid native Docker hook, never by this image or this repository |
 
 Do not add image pins for these tools, install a local Ollama server, or mutate shared host plugins. Only the coordinator applies persistent-home updates, after review, within the persistent home environment as UID/GID `10000:10000`. The `npm` used below is the one bundled with Node 24 in this image, which is compatible with these commands.
@@ -98,38 +115,45 @@ if [ -e "$HOME/.local/bin" ]; then
 fi
 ```
 
-Install the current pnpm 9 line into the user-owned prefix, then verify it:
+The observed pnpm installation is user-owned under `$HOME/.local` and came from npm with that prefix. Update it to the exact target version, then verify the resolved binary; do not use a floating tag:
 
 ```sh
-npm install --global --prefix "$HOME/.local" 'pnpm@9'
+npm install --global --prefix "$HOME/.local" 'pnpm@12.14.0'
 "$HOME/.local/bin/pnpm" --version
 ```
 
-Confirm uv's installation provenance and the ownership of its resolved executable (`command -v uv` and `stat -Lc '%u:%g' "$(command -v uv)"`). For a **standalone user-owned** uv installation, update it in place and verify:
+The second command must report `12.14.0` (before the update this host reported `12.11.2`).
+
+The supplied evidence does not establish how ripgrep was installed. Confirm its provenance and ownership before updating it (`command -v rg` and `stat -Lc '%u:%g' "$(command -v rg)"`). For a **confirmed user-owned Cargo installation**, the bounded update to the exact target is:
 
 ```sh
-uv self update 0.13.1
+cargo install --locked --root "$HOME/.local" ripgrep --version 15.2.0
+"$HOME/.local/bin/rg" --version
+```
+
+The final command must report `15.2.0` (before the update this host reported `15.0.0`). If ripgrep was installed with a different user-owned package manager, use that manager's exact-version operation and verify the resolved `rg` reports `15.2.0`. If it is system-owned or its provenance is unknown, stop rather than updating it as root or guessing a method.
+
+uv `0.13.1` is current per the supplied evidence. Confirm its installation provenance and the ownership of its resolved executable (`command -v uv` and `stat -Lc '%u:%g' "$(command -v uv)"`); no uv update is required for this refresh:
+
+```sh
 uv --version
 ```
 
-`uv self update` only applies to uv's own standalone installer. For a confirmed user-owned pipx installation, use `pipx install --force 'uv==0.13.1'`; for a confirmed user-site pip installation, use that installation's Python with `python3 -m pip install --user --upgrade 'uv==0.13.1'`, then run `uv --version` and check it reports `0.13.1`. Do not use these alternatives for an unknown or system-owned installation. Keep project package-manager pins, lockfiles, and virtual environments intact.
-
-The supplied 2026-10-14 release evidence records **3.12.15** as the latest supported Python 3.12 patch. Availability through the selected **uv 0.13.1** is still unverified: the offline implementation environment has uv 0.12.13, whose built-in catalog lists 3.12.14. Before applying the Python update, the coordinator must confirm that uv 0.13.1 lists CPython 3.12.15 as its newest 3.12 download:
+Managed Python on the supported 3.12 branch is also current at `3.12.15`; no Python update or branch change is pending or authorized. Verify the exact managed interpreter directly, outside any project environment:
 
 ```sh
 uv --version
-uv python list 3.12 --only-downloads
-```
-
-After that verification, install and select the exact evidence-backed patch, then check the interpreter directly, outside any project environment:
-
-```sh
-uv python install 3.12.15
 python312="$(uv python find --managed-python 3.12.15)"
 "$python312" -c 'import sys; assert sys.version_info[:3] == (3, 12, 15), sys.version; print(sys.version)'
 ```
 
-If the catalog disagrees, stop and review the evidence; do not silently substitute a patch. These instructions are pending that compatibility verification. Select the returned interpreter path explicitly where needed; do not recreate existing virtual environments or rewrite their Python selection as part of this image refresh. Retain Node 24's bundled compatible npm.
+If the interpreter cannot be found or reports a different patch, stop and review the evidence; do not silently substitute a patch or switch branches. Keep project package-manager pins, lockfiles, and virtual environments intact, and select the returned interpreter path explicitly where needed. Retain Node 24's bundled compatible npm.
+
+## T3 V1 to V2 migration
+
+T3 `0.1.0` is the V2 line. The owner has approved the migration and will update connected apps. Deploy the V2 image while T3 is idle, after backing up the existing `T3CODE_HOME/userdata` directory (at minimum `state.sqlite`) as a rollback reference. No manual database copy or import is required: on the first V2 start the server automatically copies `userdata/state.sqlite` to `userdata/statev2.sqlite` and migrates that copy, so existing threads appear without manual import.
+
+**Never create, replace, or overwrite an existing `statev2.sqlite`.** A manual copy of `state.sqlite` after V2 has started would overwrite V2 progress; let the automatic one-time migration run instead. After migration, the V1 `userdata/state.sqlite` remains unchanged as a rollback reference, and the V1 and V2 histories are independent and diverge as each is used. Settings, attachments, and project files are shared between V1 and V2. The first message in an old thread starts a fresh provider session with the budgeted prior conversation. Native provider sessions, tool history, and checkpoint history do not migrate. Connected V1 apps are incompatible with V2: each requires app `2.0` or a matching web app. OpenCode 1 (`1.19.3`) is retained intentionally because upstream V2 support is limited; no shared OpenCode 2 database migration is authorized.
 
 ## Private Unraid Tailscale access
 
