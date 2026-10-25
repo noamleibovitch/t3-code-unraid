@@ -9,45 +9,71 @@ This directory is a local Docker build context for a headless T3 Code server. It
 Example build on a Docker-capable host:
 
 ```sh
-docker build --pull --no-cache --tag t3-code-unraid:0.1.0 /opt/data/t3-code-unraid
+docker build --pull --no-cache --tag t3-code-unraid:0.1.2 /opt/data/t3-code-unraid
 ```
 
 No remote `latest` tag is used. The direct tool versions are pinned as follows:
 
 | Component | Pinned version/source |
 | --- | --- |
-| Node.js | `node:24-bookworm-slim` (latest supported LTS major; a refreshed build resolves Node `24.22.0` with bundled npm `11.19.1`) |
-| T3 Code (`t3`) | `0.1.0` |
-| Codex CLI (`@openai/codex`) | `0.163.0` |
-| OpenCode CLI (`opencode-ai`) | `1.19.3` |
-| GitHub CLI (`gh`) | `2.102.0` |
-| Ollama Cloud client (`ollama`) | `0.40.6` |
+| Node.js | `node:24.22.1-bookworm-slim` (Node 24 LTS with bundled npm `11.19.1`) |
+| T3 Code (`t3`) | `0.1.2` official standalone `linux-x64`/`linux-arm64` archive |
+| Codex CLI (`@openai/codex`) | `0.164.0` |
+| OpenCode CLI (`opencode-ai`) | `1.19.4` |
+| GitHub CLI (`gh`) | `2.103.2` |
+| Ollama Cloud client (`ollama`) | `0.40.11` |
 
-The base stays on the Node 24 LTS line. Building with `--pull`/`no-cache` (as the
-CI workflow does) refreshes it to Node `24.22.0`, bundled npm `11.19.1`, and
-current Debian security packages, such as the bookworm jq security update
-`1.6-2.1+deb12u3`. Those are expected build-time resolutions, not versions
-exercised by the offline checks in this source session; the CI image build is
-where they are installed and tested.
+Both build stages pin the same Node `24.22.1` LTS base with bundled npm
+`11.19.1`; the major line does not move to Node 26 or standalone npm 12.
+Building with `--pull`/`no-cache` (as the CI workflow does) also refreshes the
+Debian security packages. Those refreshed packages are installed and exercised
+only by the CI image build, not by the offline checks in this source session.
 
-T3 `0.1.0` ships a launcher at `bin/t3.js` and resolves its platform binary from
-`@t3code/t3-<platform>-<arch>`. The image keeps the complete `t3` npm package,
-including those sibling platform assets, because extracting only the executable
-without them fails to start. It links `/usr/local/bin/t3` to the launcher; the
-older `dist/bin.mjs` path still exists but is no longer the declared entry point.
-Version pins are asserted in both build stages, so a mismatch fails the image
-build instead of shipping silently.
+T3 `0.1.2` no longer ships `@t3code/t3-platform` optional packages. Its npm
+launcher (`bin/t3.mjs`) would download a mutable standalone tree into writable
+`T3CODE_HOME` on first start, which this image deliberately avoids. The build
+instead downloads the complete official release archive, verifies its SHA-256,
+and extracts the full tree root-owned at `/opt/t3`: the native `t3` executable
+plus `node_modules/`, `client/`, and `resource-monitor/`. All of those
+companions are required and preserved. `/usr/local/bin/t3` is a root-owned
+symlink to `/opt/t3/t3`, and the entrypoint executes `/opt/t3/t3` directly as
+PID 1. There is no npm T3 package and no `@t3code` resolution in the image.
+Version pins and the exact installed version plus required `serve` flags are
+asserted at build time, so a mismatch or incomplete archive fails the build.
 
-The GitHub CLI and Ollama client archives are selected for Debian `amd64` or `arm64` and checked against release SHA-256 values before installation. The Ollama `0.40.6` hashes below were verified against both the GitHub release assets and the release's official `sha256sum.txt`, and the archive name remains `ollama-linux-ARCH.tar.zst`:
+Archive names and SHA-256 values are selected for Debian `amd64` or `arm64`:
+
+| T3 archive | SHA-256 |
+| --- | --- |
+| `t3-0.1.2-linux-x64.tar.gz` | `7aed625cb961938df174c1a067c0f05235360940b53e882a1643126b754da16c` |
+| `t3-0.1.2-linux-arm64.tar.gz` | `df112e1f19772b4055a28c97b032eb6d038d5d7182015f1cafd3254ad6fabd0f` |
+
+| GitHub CLI archive | SHA-256 |
+| --- | --- |
+| `gh_2.103.2_linux_amd64.tar.gz` | `62ccf747115ddc61237efffdde66a3c8f70ba249433dc64f70801089b59c59c8` |
+| `gh_2.103.2_linux_arm64.tar.gz` | `4c3e99a50bd8b181a3fe9d69b25dd978bac768148d88f01507c6b4d1ef61a443` |
 
 | Ollama archive | SHA-256 |
 | --- | --- |
-| `ollama-linux-amd64.tar.zst` | `c164ab8b1b28e2a247c29719b8e404c423c5b83ae64c3ab4e59d50c7ff7fc5e0` |
-| `ollama-linux-arm64.tar.zst` | `0a279d9428ad17b06fdb7dddf3b059b2c148433585fa3b30676a102fc459bb9f` |
+| `ollama-linux-amd64.tar.zst` | `7bedab90dd122661be78798e9f0edf37fccf0cccf2699d2c58ea1a3afdc04b6d` |
+| `ollama-linux-arm64.tar.zst` | `77b278837b9e62c172f77d703675be4c52c8054e9075639031a9a6d5a53f1924` |
 
-CI downloads and checks the archive bytes during the image build, and the Dockerfile fails closed on a download or checksum error. The final image contains only the Ollama client binary: it does not run a local Ollama server, include model storage, or require a GPU.
+The GitHub CLI archive is `tar.gz`; Ollama archives are `tar.zst` and only
+`bin/ollama` is extracted. CI downloads and checks every archive's bytes during
+the image build, and the Dockerfile fails closed on a download or checksum
+error. The final image contains only the Ollama client binary: it does not run
+a local Ollama server, include model storage, or require a GPU.
 
-The refresh uses the supplied release evidence dated 2026-10-18 (`.workflow-kit/release-evidence.json` and `.workflow-kit/CLI-COMPATIBILITY.json`). No downloads or Docker builds were performed in the network-disabled implementation session. Official archive availability and downloaded-byte checksum verification remain release prerequisites. CI builds amd64 only, so the arm64 archive checksum is verified but no arm64 image build or runtime has been validated; arm64 support still needs separate image verification before it is claimed.
+The refresh uses the supplied release evidence dated 2026-10-25
+(`.workflow-kit/release-evidence.json`, `.workflow-kit/CLI-COMPATIBILITY.json`,
+and `.workflow-kit/base-image-verification.json`). This source stage performed
+no downloads, image build, or Docker run. Separately, the parent downloaded and
+SHA-256-verified the complete T3 `0.1.2` `linux-x64` archive and actually ran
+`--version`, `serve --help`, an isolated HTTP startup (HTTP 200), and SIGTERM
+(exit 130). That is limited artifact qualification, **not** image acceptance:
+real image qualification remains required in CI. CI builds `amd64` only, so the
+arm64 checksums are verified but no arm64 image build or runtime has been
+validated; do not claim arm64 support without separate image verification.
 
 ## Runtime contract
 
@@ -56,7 +82,7 @@ The refresh uses the supplied release evidence dated 2026-10-18 (`.workflow-kit/
 - `/workspace` is the expected project bind mount and the container working directory.
 - `T3_PORT` controls both the T3 listener and the health check; its default is `9877`.
 - T3 binds to `0.0.0.0` **inside the container** so Docker bridge port publishing can reach it.
-- The entrypoint resolves and `exec`s T3's packaged native binary rather than its npm launcher, so the server is PID 1 and receives `SIGTERM` and `SIGINT` directly.
+- The entrypoint `exec`s `/opt/t3/t3` directly rather than the npm launcher, so the server is PID 1 and receives `SIGTERM` and `SIGINT` directly.
 - The built-in health check probes `http://127.0.0.1:${T3_PORT}/` from inside the container.
 
 ## Package layout and provider self-updates
@@ -65,7 +91,7 @@ The image separates code it ships from code the application maintains:
 
 | Location | Owner | Contents | Updated by |
 | --- | --- | --- | --- |
-| `/usr/local/lib/node_modules/t3` | `root` | T3 Code itself | A new image, through the Unraid Docker template |
+| `/opt/t3` | `root` | Complete T3 Code standalone tree (`t3`, `node_modules/`, `client/`, `resource-monitor/`) | A new image, through the Unraid Docker template |
 | `/opt/t3-providers` | `10000:10000` | Codex CLI, OpenCode CLI | T3's **Update** button, or a new image |
 
 `/opt/t3-providers` is reached through root-owned symlinks in `/usr/local/bin` (`codex`, `opencode`), so the providers are on `PATH` while the writable prefix itself is **not**. That matters: the Unraid Tailscale hook runs as root with this image's environment, so putting a directory the application can write on `PATH` would let it shadow a binary that root executes. Its `/bin` holds the usual npm shims. T3 identifies a provider's install prefix by matching `/lib/node_modules/<package>/` inside the resolved real path of the provider binary, so this layout is detected as an npm-global install that T3 is allowed to update. It then runs `npm install -g --prefix /opt/t3-providers <package>@latest`, which writes both the package and its shim inside that prefix.
@@ -93,67 +119,38 @@ Any host bind directories that T3 must write need to be writable by UID/GID `100
 
 ## Persistent-home tool updates
 
-Some tools audited alongside this image live in the **persistent home**, not in the image. They are deliberately not pinned or installed by this build context, and their updates are **not** applied by this workflow:
+Some tools audited alongside this image live in the **persistent home**, not in the image. They are deliberately **not** image pins, and this source stage does not install or update them:
 
-| Tool | Authority |
+| Tool | Boundary |
 | --- | --- |
-| pnpm | persistent home (`$HOME/.local`), applied by the coordinator after review; observed `12.11.2`, target `12.14.0` |
-| ripgrep (`rg`) | persistent home, applied by the coordinator after review; observed `15.0.0`, target `15.2.0` |
-| uv | persistent home, applied by the coordinator after review; current `0.13.1` |
-| managed Python 3.12 | persistent home, managed through uv; current `3.12.15` |
-| Tailscale | installed and owned by the Unraid native Docker hook, never by this image or this repository |
+| pnpm | Parent-owned persistent-home update to `12.15.0`, performed only while T3 is idle after provenance and ownership verification |
+| uv | Parent-owned persistent-home update to `0.13.5`, performed only while T3 is idle after provenance and ownership verification |
+| ripgrep (`rg`) | Retained at `15.2.0`; no image pin and no update in this stage |
+| Corepack | Retained at `0.36.0`; do not replace it with an unreviewed shim operation |
+| managed Python 3.12 | Baseline remains `3.12.15`. Python `3.12.16` was released 2026-10-25, but managed-binary availability and target-runtime qualification remain pending |
+| Tailscale | Installed and owned by the Unraid native Docker hook, never by this image or this repository |
 
-Do not add image pins for these tools, install a local Ollama server, or mutate shared host plugins. Only the coordinator applies persistent-home updates, after review, within the persistent home environment as UID/GID `10000:10000`. The `npm` used below is the one bundled with Node 24 in this image, which is compatible with these commands.
+Do not add image pins for these tools, install a local Ollama server, mutate shared host plugins, or change the Python branch. For Python `3.12.16`, do not describe `3.12.15` as the latest patch and do not invent an installer or download method; availability must be established before any parent-owned update.
 
-Run these commands only in the persistent-home environment after review. First confirm the effective user and that `$HOME/.local` and its existing `bin` directory are user-owned; stop on a mismatch rather than changing ownership as root:
+The parent owns persistent-home updates and must verify provenance and ownership under UID/GID `10000:10000` before applying them. Keep project package-manager pins, lockfiles, virtual environments, and the older tool versions available for rollback. Retain Node 24's bundled compatible npm; do not adopt Node 26 or standalone npm 12 here.
 
-```sh
-test "$(id -u):$(id -g)" = 10000:10000
-test "$(stat -c '%u:%g' "$HOME/.local")" = 10000:10000
-if [ -e "$HOME/.local/bin" ]; then
-    test "$(stat -c '%u:%g' "$HOME/.local/bin")" = 10000:10000
-fi
-```
+## T3 V2 generation and automatic migrations
 
-The observed pnpm installation is user-owned under `$HOME/.local` and came from npm with that prefix. Update it to the exact target version, then verify the resolved binary; do not use a floating tag:
+T3 `0.1.2` stays on the **existing V2 generation**. This update does not introduce a new database generation and does not change the V2 data model beyond automatic migrations. The owner has approved the migration and will update connected apps.
 
-```sh
-npm install --global --prefix "$HOME/.local" 'pnpm@12.14.0'
-"$HOME/.local/bin/pnpm" --version
-```
+On first start of `0.1.2` against an existing V2 database, T3 runs migrations `063` through `067` automatically:
 
-The second command must report `12.14.0` (before the update this host reported `12.11.2`).
+- `063` drops obsolete V1 projection tables **only inside the current V2 database**. It does not alter the legacy `userdata/state.sqlite`.
+- `064` canonicalizes thread pull-request links in V2 projection payloads and source events.
+- `065` adds the Codex native-turn usage index.
+- `066` repairs historical client settlement timestamps.
+- `067` adds scheduled webhook deduplication and replay state.
 
-The supplied evidence does not establish how ripgrep was installed. Confirm its provenance and ownership before updating it (`command -v rg` and `stat -Lc '%u:%g' "$(command -v rg)"`). For a **confirmed user-owned Cargo installation**, the bounded update to the exact target is:
+Before the first `0.1.2` start, the parent must retain a quiesced snapshot of the current V2 database (`userdata/statev2.sqlite`) as the rollback reference, taken while T3 is idle. The schema is **not assumed to be downgrade-safe**: rolling back to a previous image requires restoring the matching quiesced snapshot rather than expecting reverse migrations.
 
-```sh
-cargo install --locked --root "$HOME/.local" ripgrep --version 15.2.0
-"$HOME/.local/bin/rg" --version
-```
+**Never create, replace, or overwrite an existing `statev2.sqlite`.** A manual copy of `state.sqlite` after V2 has started would overwrite V2 progress. Preserve the legacy `userdata/state.sqlite` unchanged as rollback evidence. Do **not** run `t3 doctor cleanup`; later T3 releases can delete the pre-`0.1.0` database, which must remain.
 
-The final command must report `15.2.0` (before the update this host reported `15.0.0`). If ripgrep was installed with a different user-owned package manager, use that manager's exact-version operation and verify the resolved `rg` reports `15.2.0`. If it is system-owned or its provenance is unknown, stop rather than updating it as root or guessing a method.
-
-uv `0.13.1` is current per the supplied evidence. Confirm its installation provenance and the ownership of its resolved executable (`command -v uv` and `stat -Lc '%u:%g' "$(command -v uv)"`); no uv update is required for this refresh:
-
-```sh
-uv --version
-```
-
-Managed Python on the supported 3.12 branch is also current at `3.12.15`; no Python update or branch change is pending or authorized. Verify the exact managed interpreter directly, outside any project environment:
-
-```sh
-uv --version
-python312="$(uv python find --managed-python 3.12.15)"
-"$python312" -c 'import sys; assert sys.version_info[:3] == (3, 12, 15), sys.version; print(sys.version)'
-```
-
-If the interpreter cannot be found or reports a different patch, stop and review the evidence; do not silently substitute a patch or switch branches. Keep project package-manager pins, lockfiles, and virtual environments intact, and select the returned interpreter path explicitly where needed. Retain Node 24's bundled compatible npm.
-
-## T3 V1 to V2 migration
-
-T3 `0.1.0` is the V2 line. The owner has approved the migration and will update connected apps. Deploy the V2 image while T3 is idle, after backing up the existing `T3CODE_HOME/userdata` directory (at minimum `state.sqlite`) as a rollback reference. No manual database copy or import is required: on the first V2 start the server automatically copies `userdata/state.sqlite` to `userdata/statev2.sqlite` and migrates that copy, so existing threads appear without manual import.
-
-**Never create, replace, or overwrite an existing `statev2.sqlite`.** A manual copy of `state.sqlite` after V2 has started would overwrite V2 progress; let the automatic one-time migration run instead. After migration, the V1 `userdata/state.sqlite` remains unchanged as a rollback reference, and the V1 and V2 histories are independent and diverge as each is used. Settings, attachments, and project files are shared between V1 and V2. The first message in an old thread starts a fresh provider session with the budgeted prior conversation. Native provider sessions, tool history, and checkpoint history do not migrate. Connected V1 apps are incompatible with V2: each requires app `2.0` or a matching web app. OpenCode 1 (`1.19.3`) is retained intentionally because upstream V2 support is limited; no shared OpenCode 2 database migration is authorized.
+Accounts, scopes, data, settings, provider credentials, and project work are retained; they live in the persistent home and workspace, not in the image. Native provider sessions, tool history, and checkpoint history are not part of the V1-to-V2 migration. Connected V1 apps remain incompatible with V2 and require app `2.0` or a matching web app. OpenCode 1 (`1.19.4`) is retained intentionally; there is no OpenCode 2 / `@opencode/cli` migration, no Node 26/npm 12 adoption, no host plugin change, and no public ingress in this update.
 
 ## Private Unraid Tailscale access
 
@@ -181,13 +178,13 @@ Run the public release-gate regression tests without Docker or network access:
 bash tests/image-smoke.sh --self-test
 ```
 
-They execute the workflow's inspection and promotion shell blocks against synthetic Buildx responses, including separate provenance/SBOM manifests, reordered descriptors, lost/added/duplicated/changed descriptors, and promotion/inspection errors. They also assert that the smoke step bound-pulls the exact candidate digest before the smoke script runs and that a failed pull fails the step, and that the smoke's readiness status range stays identical to `healthcheck.sh`. A fake `docker` also drives the real smoke script through bounded shutdown fixtures: a post-SIGTERM exit `130` (the pinned Effect interruption code) is accepted, while a premature self-exit `130` before the signal and a forced SIGKILL (`exit 137`) are rejected, and a slow start that outlives the readiness deadline but is still running is not misreported as a premature exit. They do not build an image or move a real tag.
+They execute the workflow's inspection and promotion shell blocks against synthetic Buildx responses, including separate provenance/SBOM manifests, reordered descriptors, lost/added/duplicated/changed descriptors, and promotion/inspection errors. They also assert that the smoke step bound-pulls the exact candidate digest before the smoke script runs and that a failed pull fails the step, and that the smoke's readiness status range stays identical to `healthcheck.sh`. A fake `docker` also drives the real smoke script through bounded shutdown fixtures: a post-SIGTERM exit `130` (the pinned Effect interruption code) is accepted, while a premature self-exit `130` before the signal and a forced SIGKILL (`exit 137`) are rejected, and a slow start that outlives the readiness deadline but is still running is not misreported as a premature exit. They additionally check the offline standalone-packaging contract: both Node base pins, every version ARG, the T3 archive extraction into `/opt/t3`, the root-owned launcher symlink, and the absence of npm T3/`@t3code` resolution. They do not build an image or move a real tag.
 
 Without building an image, the shell files can be syntax-checked read-only:
 
 ```sh
-sh -n /opt/data/t3-code-unraid/entrypoint.sh
-sh -n /opt/data/t3-code-unraid/healthcheck.sh
+sh -n entrypoint.sh
+sh -n healthcheck.sh
 ```
 
 An end-to-end validation still requires a Docker-capable Unraid host or CI runner.
@@ -204,7 +201,7 @@ The workflow never publishes `stable` directly from the build step. Instead it:
 
 1. Builds and pushes only the immutable candidate tag `sha-<commit>` (with `pull: true`, `no-cache: true`, `provenance: mode=max`, and `sbom: true`).
 2. Inspects the candidate index by the digest returned from the build step and records every descriptor. It requires the expected `linux/amd64` image manifest plus provenance/SBOM attestation descriptors, then records the selected amd64 manifest's configuration digest.
-3. Bound-pulls the exact candidate digest with `timeout 600 docker pull` and only then runs `bash tests/image-smoke.sh` against `ghcr.io/<owner>/t3-code-unraid@<candidate-index-digest>`, requiring the smoke container's image ID to equal the inspected amd64 configuration digest. Pulling first keeps a cold registry pull out of the smoke's per-call Docker budget; the smoke starts its container with `--pull=never` against that local copy. The smoke test launches the default entrypoint with disposable home/workspace volumes, no credentials, and networking disabled on `--platform linux/amd64`. It requires an HTTP status below 500 (mirroring `healthcheck.sh`, which accepts 200-499 with redirect handling disabled) within an elapsed-time deadline, native T3 as PID 1 running as `10000:10000`, app-writable provider directories, protected T3/launch paths and PATH directories, and real provider CLI and T3 launcher execution as the app user. Each Docker call is bounded. It verifies the container is still running immediately before the signal, then requires normal SIGTERM to stop it within a deadline with exit `0`, `130`, or `143`, without SIGKILL or OOM termination; any other code, and any pre-signal self-exit, fails. Exit `130` is expected here rather than a bug: the pinned Effect `4.0.0-rc.115` registers `SIGTERM` alongside `SIGINT` to trigger an interruption, and its `defaultTeardown` returns `130` for an interrupt-only cause. Exit `143` covers a plain raw-SIGTERM termination and `0` a clean shutdown. Cleanup removes the container and its anonymous volumes; failures print logs and container state.
+3. Bound-pulls the exact candidate digest with `timeout 600 docker pull` and only then runs `bash tests/image-smoke.sh` against `ghcr.io/<owner>/t3-code-unraid@<candidate-index-digest>`, requiring the smoke container's image ID to equal the inspected amd64 configuration digest. Pulling first keeps a cold registry pull out of the smoke's per-call Docker budget; the smoke starts its container with `--pull=never` against that local copy. The smoke test launches the default entrypoint with disposable home/workspace volumes, no credentials, and networking disabled on `--platform linux/amd64`. It requires an HTTP status below 500 (mirroring `healthcheck.sh`, which accepts 200-499 with redirect handling disabled) within an elapsed-time deadline; `/opt/t3/t3` as PID 1 running as `10000:10000`; the complete standalone `t3`/`node_modules`/`client`/`resource-monitor` tree and protected T3/launch paths root-owned and not app-writable; app-writable provider directories; and real provider CLI and T3 launcher execution as the app user. Each Docker call is bounded. It verifies the container is still running immediately before the signal, then requires normal SIGTERM to stop it within a deadline with exit `0`, `130`, or `143`, without SIGKILL or OOM termination; any other code, and any pre-signal self-exit, fails. Exit `130` is expected here rather than a bug: the pinned Effect `4.0.0-rc.115` registers `SIGTERM` alongside `SIGINT` to trigger an interruption, and its `defaultTeardown` returns `130` for an interrupt-only cause. Exit `143` covers a plain raw-SIGTERM termination and `0` a clean shutdown. Cleanup removes the container and its anonymous volumes; failures print logs and container state.
 4. Promotes the complete candidate index to `stable` with a single `docker buildx imagetools create --tag ...:stable <candidate>@<digest>` call that carries the image manifest and attestations together. No rebuild or leaf-image pull/tag/push is used.
 5. Re-inspects `stable` and requires an exact, order-independent descriptor multiset match (digests, media types, sizes, platforms, and attestation annotations, including all `unknown/unknown` descriptors) with the recorded candidate descriptors. Both the candidate and promoted index digests are reported to the step summary.
 

@@ -65,6 +65,25 @@ repo_root = Path(sys.argv[1]).resolve().parents[1]
 assert accepted_status_range(Path(sys.argv[1]).read_text()) == \
     accepted_status_range((repo_root / "healthcheck.sh").read_text()) == (200, 500)
 
+# Offline packaging regressions: the image must install the complete official
+# T3 standalone archive at /opt/t3, run it directly as PID 1, and not fall back
+# to the retired npm package or @t3code platform resolution.
+dockerfile = (repo_root / "Dockerfile").read_text()
+entrypoint = (repo_root / "entrypoint.sh").read_text()
+runtime_check = (repo_root / "check-runtime-deps.mjs").read_text()
+assert dockerfile.count("FROM node:24.22.1-bookworm-slim AS ") == 2
+for pin in ("ARG T3_VERSION=0.1.2", "ARG CODEX_VERSION=0.164.0",
+            "ARG OPENCODE_VERSION=1.19.4", "ARG GH_VERSION=2.103.2",
+            "ARG OLLAMA_VERSION=0.40.11"):
+    assert dockerfile.count(pin) == 2, pin
+assert "t3-${T3_VERSION}-linux-${t3_arch}.tar.gz" in dockerfile
+assert "tar -xzf \"/tmp/${archive}\" -C /opt/t3 --strip-components=1" in dockerfile
+assert "ln -s /opt/t3/t3 /usr/local/bin/t3" in dockerfile
+assert "t3@${T3_VERSION}" not in dockerfile
+assert "@t3code/t3-" not in entrypoint and "@t3code/t3-" not in runtime_check
+assert "exec /opt/t3/t3 serve" in entrypoint
+assert "/opt/t3/t3" in runtime_check
+
 # A cold pull must never be charged against the smoke's per-call Docker budget:
 # the container is always started from the copy the CI step already fetched.
 assert "--pull=never" in Path(sys.argv[1]).read_text(), \
@@ -233,7 +252,7 @@ if args[0] == "exec":
         sys.stdout.write("Uid:\\t10000\\t10000\\t10000\\t10000\\nGid:\\t10000\\t10000\\t10000\\t10000\\n")
         sys.exit(0)
     if "/proc/1/exe" in joined:
-        sys.stdout.write("/usr/local/lib/node_modules/@t3code/t3-linux-x64/t3\\n")
+        sys.stdout.write("/opt/t3/t3\\n")
         sys.exit(0)
     if "stat" in args:
         sys.stdout.write("0:0\\n")
@@ -292,10 +311,13 @@ sys.exit(0)
         smoke_case("forced137", 137, False, "exit 137")
         # A slow start whose post-readiness checks outlive START_DEADLINE must not
         # be misread as a premature exit: the pre-signal running check has its own
-        # fresh per-call bound, independent of the expired startup deadline.
-        smoke_case("lateReady", 130, True, None, start_deadline="1",
-                   extra_env={"SMOKE_SLOW_RUNNING_INSPECT": "1.5"})
-print("PASS: 28 offline release-gate cases (split attestations, missing evidence, descriptor multiset, bounded pre-pull ordering, smoke-to-manifest binding, promotion errors, readiness/healthcheck parity, bounded SIGTERM exit classification, deadline-independent pre-signal running check)")
+        # fresh per-call bound, independent of the expired startup deadline. The
+        # fixture keeps a startup allowance large enough that readiness itself is
+        # not load-sensitive, then deliberately outlives it by a wider margin. The
+        # production default and per-call Docker bounds are unchanged.
+        smoke_case("lateReady", 130, True, None, start_deadline="3",
+                   extra_env={"SMOKE_SLOW_RUNNING_INSPECT": "5"})
+print("PASS: 28 offline release-gate cases (split attestations, missing evidence, descriptor multiset, bounded pre-pull ordering, smoke-to-manifest binding, promotion errors, readiness/healthcheck parity, bounded SIGTERM exit classification, deadline-independent pre-signal running check) plus standalone T3 packaging/pin assertions")
 PY
 fi
 
@@ -399,10 +421,8 @@ pid1_gid="$(printf '%s\n' "${status_file}" | sed -n 's/^Gid:[[:space:]]*\([0-9]*
 [ "${pid1_gid}" = "${APP_GID}" ] || fail "PID 1 runs as gid ${pid1_gid}, expected ${APP_GID}"
 
 pid1_exe="$(app_exec readlink /proc/1/exe)"
-case "${pid1_exe}" in
-    *"@t3code/t3-linux-x64/t3") ;;
-    *) fail "PID 1 is not the native T3 binary: ${pid1_exe}" ;;
-esac
+[ "${pid1_exe}" = "/opt/t3/t3" ] \
+    || fail "PID 1 is not the installed standalone T3 binary at /opt/t3/t3: ${pid1_exe}"
 
 # Provider prefix must be writable by the app user for in-UI updates.
 app_exec sh -eu -c '
@@ -419,28 +439,33 @@ app_exec sh -eu -c '
 owner_of() {
     app_exec stat -c '%u:%g' "$1"
 }
-[ "$(owner_of /usr/local/lib/node_modules/t3)" = "0:0" ] || fail "/usr/local/lib/node_modules/t3 is not root-owned"
+[ "$(owner_of /opt/t3)" = "0:0" ] || fail "/opt/t3 is not root-owned"
+for path in /opt/t3/t3 /opt/t3/node_modules /opt/t3/client /opt/t3/resource-monitor; do
+    [ "$(owner_of "${path}")" = "0:0" ] || fail "${path} is not root-owned"
+done
 [ "$(owner_of /usr/local/bin/t3)" = "0:0" ] || fail "/usr/local/bin/t3 is not root-owned"
 [ "$(owner_of /usr/local/bin/codex)" = "0:0" ] || fail "/usr/local/bin/codex is not root-owned"
 [ "$(owner_of /usr/local/bin/opencode)" = "0:0" ] || fail "/usr/local/bin/opencode is not root-owned"
 
 # Ownership alone does not protect a group/world-writable file or its parent.
-# Resolve the packaged binary exactly, and check launch directories and PATH
-# as the app user, without following the writable provider targets as root.
+# Resolve the installed standalone binary exactly, and check the complete
+# companion tree, launch directories and PATH as the app user, without
+# following the writable provider targets as root.
 app_exec node -e '
 const fs = require("node:fs");
-const { createRequire } = require("node:module");
-const { dirname, join } = require("node:path");
-const requireT3 = createRequire("/usr/local/lib/node_modules/t3/package.json");
-const native = fs.realpathSync(join(dirname(requireT3.resolve("@t3code/t3-linux-x64/package.json")), "t3"));
-if (fs.realpathSync("/proc/1/exe") !== native) throw new Error("PID 1 is not the packaged native T3 binary");
+const { dirname } = require("node:path");
+const native = fs.realpathSync("/opt/t3/t3");
+if (fs.realpathSync("/proc/1/exe") !== native) throw new Error("PID 1 is not the installed standalone T3 binary");
 const status = fs.readFileSync("/proc/1/status", "utf8");
 for (const key of ["Uid", "Gid"]) {
   const match = status.match(new RegExp("^" + key + ":\\s+(.+)$", "m"));
   if (!match || match[1].trim().split(/\s+/).some(value => value !== "10000"))
     throw new Error("PID 1 has unexpected " + key + " credentials");
 }
-const protectedPaths = new Set(["/usr/local/lib/node_modules/t3/bin/t3.js", native]);
+const protectedPaths = new Set([
+  "/opt/t3", native, "/opt/t3/node_modules", "/opt/t3/client", "/opt/t3/resource-monitor",
+  "/usr/local/bin/t3",
+]);
 for (const p of [...protectedPaths, "/usr/local/bin", "/opt", ...process.env.PATH.split(":")]) {
   if (!p.startsWith("/")) throw new Error("relative or empty PATH entry: " + p);
   for (let path = p;; path = dirname(path)) {
@@ -455,11 +480,15 @@ for (const path of protectedPaths) {
   catch (error) { if (error.code === "EACCES") continue; throw error; }
   throw new Error("app can write protected path: " + path);
 }
-for (const name of ["t3", "codex", "opencode"]) {
+if (!fs.lstatSync("/usr/local/bin/t3").isSymbolicLink())
+  throw new Error("not a launch symlink: /usr/local/bin/t3");
+if (fs.realpathSync("/usr/local/bin/t3") !== native)
+  throw new Error("/usr/local/bin/t3 does not resolve to /opt/t3/t3");
+for (const name of ["codex", "opencode"]) {
   const path = "/usr/local/bin/" + name;
   if (!fs.lstatSync(path).isSymbolicLink()) throw new Error("not a launch symlink: " + path);
 }
-' || fail "native T3, protected launch paths, or image PATH violated the security contract"
+' || fail "standalone T3 tree, protected launch paths, or image PATH violated the security contract"
 
 # Execute the real provider CLIs (and the T3 launcher) as the app user.
 app_exec codex --version >/dev/null || fail "codex CLI failed to run as ${APP_UID}:${APP_GID}"
