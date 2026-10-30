@@ -19,7 +19,7 @@ import { execFileSync } from "node:child_process";
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const expectedVersion = "t3 v0.1.2";
+const expectedVersion = "t3 v0.1.5";
 const t3Root = "/opt/t3";
 const binary = join(t3Root, "t3");
 const launcher = "/usr/local/bin/t3";

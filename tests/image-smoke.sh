@@ -71,10 +71,10 @@ assert accepted_status_range(Path(sys.argv[1]).read_text()) == \
 dockerfile = (repo_root / "Dockerfile").read_text()
 entrypoint = (repo_root / "entrypoint.sh").read_text()
 runtime_check = (repo_root / "check-runtime-deps.mjs").read_text()
-assert dockerfile.count("FROM node:24.22.1-bookworm-slim AS ") == 2
-for pin in ("ARG T3_VERSION=0.1.2", "ARG CODEX_VERSION=0.164.0",
-            "ARG OPENCODE_VERSION=1.19.4", "ARG GH_VERSION=2.103.2",
-            "ARG OLLAMA_VERSION=0.40.11"):
+assert dockerfile.count("FROM node:24.22.2-bookworm-slim AS ") == 2
+for pin in ("ARG T3_VERSION=0.1.5", "ARG CODEX_VERSION=0.166.0",
+            "ARG OPENCODE_VERSION=1.19.5", "ARG GH_VERSION=2.103.3",
+            "ARG OLLAMA_VERSION=0.40.13"):
     assert dockerfile.count(pin) == 2, pin
 assert "t3-${T3_VERSION}-linux-${t3_arch}.tar.gz" in dockerfile
 assert "tar -xzf \"/tmp/${archive}\" -C /opt/t3 --strip-components=1" in dockerfile

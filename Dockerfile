@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 
-FROM node:24.22.1-bookworm-slim AS toolchain
+FROM node:24.22.2-bookworm-slim AS toolchain
 
-ARG T3_VERSION=0.1.2
-ARG CODEX_VERSION=0.164.0
-ARG OPENCODE_VERSION=1.19.4
-ARG GH_VERSION=2.103.2
-ARG OLLAMA_VERSION=0.40.11
+ARG T3_VERSION=0.1.5
+ARG CODEX_VERSION=0.166.0
+ARG OPENCODE_VERSION=1.19.5
+ARG GH_VERSION=2.103.3
+ARG OLLAMA_VERSION=0.40.13
 
 # Providers (codex, opencode) live in a dedicated prefix owned by the
 # application user so T3's in-UI provider updates can run. T3 itself stays in
@@ -37,7 +37,7 @@ RUN set -eux; \
         "${PROVIDER_PREFIX}" "${CODEX_VERSION}" "${OPENCODE_VERSION}"; \
     npm cache clean --force
 
-# T3 0.1.2 no longer ships @t3code platform packages. Its npm launcher would
+# T3 0.1.5 no longer ships @t3code platform packages. Its npm launcher would
 # download a standalone tree into writable T3CODE_HOME on first run, so install
 # the complete official release archive here instead. Keep the full tree
 # (t3, node_modules/, client/, resource-monitor/) root-owned and immutable; the
@@ -45,8 +45,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) t3_arch=x64; t3_sha256=7aed625cb961938df174c1a067c0f05235360940b53e882a1643126b754da16c ;; \
-        arm64) t3_arch=arm64; t3_sha256=df112e1f19772b4055a28c97b032eb6d038d5d7182015f1cafd3254ad6fabd0f ;; \
+        amd64) t3_arch=x64; t3_sha256=21d50dcc9c634221b11b58d6a94350d2c6ee36905737b054b11fa4eba295a98b ;; \
+        arm64) t3_arch=arm64; t3_sha256=389362e2a349ea62b38d9bc708f4fca2381936cccb2d326b5fc5d074b072aef1 ;; \
         *) echo "Unsupported architecture for T3 Code: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="t3-${T3_VERSION}-linux-${t3_arch}.tar.gz"; \
@@ -67,8 +67,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) gh_arch=amd64; gh_sha256=62ccf747115ddc61237efffdde66a3c8f70ba249433dc64f70801089b59c59c8 ;; \
-        arm64) gh_arch=arm64; gh_sha256=4c3e99a50bd8b181a3fe9d69b25dd978bac768148d88f01507c6b4d1ef61a443 ;; \
+        amd64) gh_arch=amd64; gh_sha256=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d ;; \
+        arm64) gh_arch=arm64; gh_sha256=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63 ;; \
         *) echo "Unsupported architecture for GitHub CLI: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"; \
@@ -86,8 +86,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) ollama_arch=amd64; ollama_sha256=7bedab90dd122661be78798e9f0edf37fccf0cccf2699d2c58ea1a3afdc04b6d ;; \
-        arm64) ollama_arch=arm64; ollama_sha256=77b278837b9e62c172f77d703675be4c52c8054e9075639031a9a6d5a53f1924 ;; \
+        amd64) ollama_arch=amd64; ollama_sha256=c9490e0f520be21271d969e6703f012268b1d39f8b70dd58854e5bfef7a75bb6 ;; \
+        arm64) ollama_arch=arm64; ollama_sha256=913d9a28da6da86d551ce4ca531457767bb14d511cbc1d5ca93e9b3b8b9a8666 ;; \
         *) echo "Unsupported architecture for Ollama CLI: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="ollama-linux-${ollama_arch}.tar.zst"; \
@@ -100,13 +100,13 @@ RUN set -eux; \
     /opt/ollama/bin/ollama --version; \
     rm -f "/tmp/${archive}"
 
-FROM node:24.22.1-bookworm-slim AS runtime
+FROM node:24.22.2-bookworm-slim AS runtime
 
-ARG T3_VERSION=0.1.2
-ARG CODEX_VERSION=0.164.0
-ARG OPENCODE_VERSION=1.19.4
-ARG GH_VERSION=2.103.2
-ARG OLLAMA_VERSION=0.40.11
+ARG T3_VERSION=0.1.5
+ARG CODEX_VERSION=0.166.0
+ARG OPENCODE_VERSION=1.19.5
+ARG GH_VERSION=2.103.3
+ARG OLLAMA_VERSION=0.40.13
 
 # Must match the toolchain stage: this prefix is owned by the application user
 # so T3's in-UI provider updates work, while T3 itself stays root-owned.
