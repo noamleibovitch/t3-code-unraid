@@ -9,7 +9,7 @@ This directory is a local Docker build context for a headless T3 Code server. It
 Example build on a Docker-capable host:
 
 ```sh
-docker build --pull --no-cache --tag t3-code-unraid:0.1.5 /opt/data/t3-code-unraid
+docker build --pull --no-cache --tag t3-code-unraid:0.1.6 /opt/data/t3-code-unraid
 ```
 
 No remote `latest` tag is used. The direct tool versions are pinned as follows:
@@ -17,7 +17,7 @@ No remote `latest` tag is used. The direct tool versions are pinned as follows:
 | Component | Pinned version/source |
 | --- | --- |
 | Node.js | `node:24.22.2-bookworm-slim` (Node 24 LTS with bundled npm `11.19.1`) |
-| T3 Code (`t3`) | `0.1.5` official standalone `linux-x64`/`linux-arm64` archive |
+| T3 Code (`t3`) | `0.1.6` official standalone `linux-x64`/`linux-arm64` archive |
 | Codex CLI (`@openai/codex`) | `0.166.0` |
 | OpenCode CLI (`opencode-ai`) | `1.19.5` |
 | GitHub CLI (`gh`) | `2.103.3` |
@@ -29,7 +29,7 @@ Building with `--pull`/`no-cache` (as the CI workflow does) also refreshes the
 Debian security packages. Those refreshed packages are installed and exercised
 only by the CI image build, not by the offline checks in this source session.
 
-T3 `0.1.5` no longer ships `@t3code/t3-platform` optional packages. Its npm
+T3 `0.1.6` no longer ships `@t3code/t3-platform` optional packages. Its npm
 launcher (`bin/t3.mjs`) would download a mutable standalone tree into writable
 `T3CODE_HOME` on first start, which this image deliberately avoids. The build
 instead downloads the complete official release archive, verifies its SHA-256,
@@ -45,8 +45,8 @@ Archive names and SHA-256 values are selected for Debian `amd64` or `arm64`:
 
 | T3 archive | SHA-256 |
 | --- | --- |
-| `t3-0.1.5-linux-x64.tar.gz` | `21d50dcc9c634221b11b58d6a94350d2c6ee36905737b054b11fa4eba295a98b` |
-| `t3-0.1.5-linux-arm64.tar.gz` | `389362e2a349ea62b38d9bc708f4fca2381936cccb2d326b5fc5d074b072aef1` |
+| `t3-0.1.6-linux-x64.tar.gz` | `7cf31da90dee41f524dd5b679ebb6d404637ca5d9dc6fd8bc019511d57bb77e6` |
+| `t3-0.1.6-linux-arm64.tar.gz` | `b708f059200776f50623a766854841e40eda0bb67614211cf8b6909295ce20da` |
 
 | GitHub CLI archive | SHA-256 |
 | --- | --- |
@@ -64,19 +64,19 @@ the image build, and the Dockerfile fails closed on a download or checksum
 error. The final image contains only the Ollama client binary: it does not run
 a local Ollama server, include model storage, or require a GPU.
 
-The refresh uses the supplied release evidence dated 2026-10-30
-(`.workflow-kit/release-evidence.json`, `.workflow-kit/CLI-COMPATIBILITY.json`,
-and `.workflow-kit/base-image-verification.json`). This source stage performed
-no downloads, image build, or Docker run. Separately, the parent downloaded and
-SHA-256-verified the complete T3 `0.1.5` `linux-x64` standalone archive and ran
-`--version`, `serve --help`, and `browser setup --help` successfully. The amd64
-(archive name `x64`) digest was verified against the downloaded bytes and the
-release asset digest; the other checksums come from the official asset digests
-and checksum manifests, and CI must download and hash the actual archives. That
-is limited artifact qualification, **not** image acceptance: real image
-execution qualification remains required in CI. CI builds `amd64` only, so the
-arm64 checksums are recorded but no arm64 image build or runtime has been
-validated; do not claim arm64 support without separate image verification.
+The refresh uses the supplied release evidence dated 2026-11-01
+(`.workflow-kit/release-evidence.json`). This source stage performed no
+downloads, image build, or Docker run. The T3 `0.1.6` digests above are copied
+from that evidence, which records a matching GitHub release-asset digest for
+both architectures; the parent must still download and hash the actual archive
+bytes. For the previous `0.1.5` release, the parent downloaded and
+SHA-256-verified the complete `linux-x64` standalone archive and ran
+`--version`, `serve --help`, and `browser setup --help` successfully. That is
+limited artifact qualification, **not** image acceptance: real image execution
+qualification remains required in CI, and no `0.1.6` artifact has been executed
+in this source stage. CI builds `amd64` only, so the arm64 checksums are
+recorded but no arm64 image build or runtime has been validated; do not claim
+arm64 support without separate image verification.
 
 ## Runtime contract
 
@@ -159,7 +159,7 @@ On first start of `0.1.5` against an existing V2 database, T3 runs migrations `0
 
 These migrations add indexes and peer-link tables/fence only; they do not activate any peer environment automatically. Peer links must be explicitly created or re-created by the owner.
 
-Before the first start of a new T3 version (`0.1.2` previously; `0.1.5` now), the parent must retain a quiesced snapshot of the current V2 database (`userdata/statev2.sqlite`) as the rollback reference, taken while T3 is idle. The schema is **not assumed to be downgrade-safe**: rolling back to a previous image requires restoring the matching quiesced snapshot rather than expecting reverse migrations.
+Before the first start of a new T3 version (`0.1.2` and `0.1.5` previously; `0.1.6` now), the parent must retain a quiesced snapshot of the current V2 database (`userdata/statev2.sqlite`) as the rollback reference, taken while T3 is idle. The schema is **not assumed to be downgrade-safe**: rolling back to a previous image requires restoring the matching quiesced snapshot rather than expecting reverse migrations.
 
 **Never create, replace, or overwrite an existing `statev2.sqlite`.** A manual copy of `state.sqlite` after V2 has started would overwrite V2 progress. Preserve the legacy `userdata/state.sqlite` unchanged as rollback evidence. Do **not** run `t3 doctor cleanup`; later T3 releases can delete the pre-`0.1.0` database, which must remain.
 
@@ -190,6 +190,11 @@ Run the public release-gate regression tests without Docker or network access:
 ```sh
 bash tests/image-smoke.sh --self-test
 ```
+
+The public source tests pin both T3 stages to exactly `0.1.6` and check each
+architecture's archive digest. Synthetic mutations must reject a stale stage,
+a version with an extra digit, an incorrect architecture, and an incorrect
+digest without reading private workflow-kit evidence.
 
 They execute the workflow's inspection and promotion shell blocks against synthetic Buildx responses, including separate provenance/SBOM manifests, reordered descriptors, lost/added/duplicated/changed descriptors, and promotion/inspection errors. They also assert that the smoke step bound-pulls the exact candidate digest before the smoke script runs and that a failed pull fails the step, and that the smoke's readiness status range stays identical to `healthcheck.sh`. A fake `docker` also drives the real smoke script through bounded shutdown fixtures: a post-SIGTERM exit `130` (the pinned Effect interruption code) is accepted, while a premature self-exit `130` before the signal and a forced SIGKILL (`exit 137`) are rejected, and a slow start that outlives the readiness deadline but is still running is not misreported as a premature exit. They additionally check the offline standalone-packaging contract: both Node base pins, every version ARG, the T3 archive extraction into `/opt/t3`, the root-owned launcher symlink, and the absence of npm T3/`@t3code` resolution. They do not build an image or move a real tag.
 

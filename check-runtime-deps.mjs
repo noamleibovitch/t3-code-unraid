@@ -2,7 +2,7 @@
 // Build-time gate: fail the image build when the pinned T3 standalone runtime
 // cannot start on THIS base image.
 //
-// T3 0.1.2 ships an official standalone archive whose complete tree contains
+// T3 0.1.6 ships an official standalone archive whose complete tree contains
 // the native `t3` executable plus node_modules/, client/, and resource-monitor/.
 // The image installs that tree root-owned at /opt/t3 and executes /opt/t3/t3
 // directly as PID 1. There is no npm-installed package or @t3code platform
@@ -19,7 +19,7 @@ import { execFileSync } from "node:child_process";
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const expectedVersion = "t3 v0.1.5";
+const expectedVersion = "t3 v0.1.6";
 const t3Root = "/opt/t3";
 const binary = join(t3Root, "t3");
 const launcher = "/usr/local/bin/t3";

@@ -2,7 +2,7 @@
 
 FROM node:24.22.2-bookworm-slim AS toolchain
 
-ARG T3_VERSION=0.1.5
+ARG T3_VERSION=0.1.6
 ARG CODEX_VERSION=0.166.0
 ARG OPENCODE_VERSION=1.19.5
 ARG GH_VERSION=2.103.3
@@ -37,7 +37,7 @@ RUN set -eux; \
         "${PROVIDER_PREFIX}" "${CODEX_VERSION}" "${OPENCODE_VERSION}"; \
     npm cache clean --force
 
-# T3 0.1.5 no longer ships @t3code platform packages. Its npm launcher would
+# T3 0.1.6 no longer ships @t3code platform packages. Its npm launcher would
 # download a standalone tree into writable T3CODE_HOME on first run, so install
 # the complete official release archive here instead. Keep the full tree
 # (t3, node_modules/, client/, resource-monitor/) root-owned and immutable; the
@@ -45,8 +45,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) t3_arch=x64; t3_sha256=21d50dcc9c634221b11b58d6a94350d2c6ee36905737b054b11fa4eba295a98b ;; \
-        arm64) t3_arch=arm64; t3_sha256=389362e2a349ea62b38d9bc708f4fca2381936cccb2d326b5fc5d074b072aef1 ;; \
+        amd64) t3_arch=x64; t3_sha256=7cf31da90dee41f524dd5b679ebb6d404637ca5d9dc6fd8bc019511d57bb77e6 ;; \
+        arm64) t3_arch=arm64; t3_sha256=b708f059200776f50623a766854841e40eda0bb67614211cf8b6909295ce20da ;; \
         *) echo "Unsupported architecture for T3 Code: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="t3-${T3_VERSION}-linux-${t3_arch}.tar.gz"; \
@@ -102,7 +102,7 @@ RUN set -eux; \
 
 FROM node:24.22.2-bookworm-slim AS runtime
 
-ARG T3_VERSION=0.1.5
+ARG T3_VERSION=0.1.6
 ARG CODEX_VERSION=0.166.0
 ARG OPENCODE_VERSION=1.19.5
 ARG GH_VERSION=2.103.3

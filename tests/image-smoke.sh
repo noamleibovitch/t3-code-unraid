@@ -72,10 +72,37 @@ dockerfile = (repo_root / "Dockerfile").read_text()
 entrypoint = (repo_root / "entrypoint.sh").read_text()
 runtime_check = (repo_root / "check-runtime-deps.mjs").read_text()
 assert dockerfile.count("FROM node:24.22.2-bookworm-slim AS ") == 2
-for pin in ("ARG T3_VERSION=0.1.5", "ARG CODEX_VERSION=0.166.0",
+for pin in ("ARG CODEX_VERSION=0.166.0",
             "ARG OPENCODE_VERSION=1.19.5", "ARG GH_VERSION=2.103.3",
             "ARG OLLAMA_VERSION=0.40.13"):
     assert dockerfile.count(pin) == 2, pin
+
+# Keep this public gate independent of private workflow-kit evidence. Check
+# exact version lines and each architecture's digest, not just digest presence.
+def assert_t3_release(text):
+    assert re.findall(r"^ARG T3_VERSION=(.+)$", text, re.M) == ["0.1.6", "0.1.6"], \
+        "both T3 stages must pin exactly 0.1.6"
+    pins = re.findall(r"^[ \t]*(amd64|arm64)\) t3_arch=(\S+); t3_sha256=([0-9a-f]{64}) ;; \\$", text, re.M)
+    assert sorted(pins) == [
+        ("amd64", "x64", "7cf31da90dee41f524dd5b679ebb6d404637ca5d9dc6fd8bc019511d57bb77e6"),
+        ("arm64", "arm64", "b708f059200776f50623a766854841e40eda0bb67614211cf8b6909295ce20da"),
+    ], "T3 architecture/digest mapping must match the 0.1.6 release"
+
+assert_t3_release(dockerfile)
+for changed in (
+    dockerfile.replace("ARG T3_VERSION=0.1.6", "ARG T3_VERSION=0.1.5", 1),
+    dockerfile.replace("ARG T3_VERSION=0.1.6", "ARG T3_VERSION=0.1.60"),
+    dockerfile.replace("t3_arch=x64", "t3_arch=arm64", 1),
+    dockerfile.replace("7cf31da90dee41f524dd5b679ebb6d404637ca5d9dc6fd8bc019511d57bb77e6",
+                       "b708f059200776f50623a766854841e40eda0bb67614211cf8b6909295ce20da", 1),
+):
+    try:
+        assert_t3_release(changed)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("T3 release gate accepted a stale version or incorrect archive pin")
+
 assert "t3-${T3_VERSION}-linux-${t3_arch}.tar.gz" in dockerfile
 assert "tar -xzf \"/tmp/${archive}\" -C /opt/t3 --strip-components=1" in dockerfile
 assert "ln -s /opt/t3/t3 /usr/local/bin/t3" in dockerfile
@@ -83,6 +110,7 @@ assert "t3@${T3_VERSION}" not in dockerfile
 assert "@t3code/t3-" not in entrypoint and "@t3code/t3-" not in runtime_check
 assert "exec /opt/t3/t3 serve" in entrypoint
 assert "/opt/t3/t3" in runtime_check
+assert 'const expectedVersion = "t3 v0.1.6";' in runtime_check
 
 # A cold pull must never be charged against the smoke's per-call Docker budget:
 # the container is always started from the copy the CI step already fetched.
@@ -317,7 +345,7 @@ sys.exit(0)
         # production default and per-call Docker bounds are unchanged.
         smoke_case("lateReady", 130, True, None, start_deadline="3",
                    extra_env={"SMOKE_SLOW_RUNNING_INSPECT": "5"})
-print("PASS: 28 offline release-gate cases (split attestations, missing evidence, descriptor multiset, bounded pre-pull ordering, smoke-to-manifest binding, promotion errors, readiness/healthcheck parity, bounded SIGTERM exit classification, deadline-independent pre-signal running check) plus standalone T3 packaging/pin assertions")
+print("PASS: 28 offline release-gate cases (split attestations, missing evidence, descriptor multiset, bounded pre-pull ordering, smoke-to-manifest binding, promotion errors, readiness/healthcheck parity, bounded SIGTERM exit classification, deadline-independent pre-signal running check) plus standalone T3 packaging/pin assertions and four T3 version/archive pin rejection cases")
 PY
 fi
 
