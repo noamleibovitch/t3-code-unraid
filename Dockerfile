@@ -2,11 +2,12 @@
 
 FROM node:24.22.2-bookworm-slim AS toolchain
 
-ARG T3_VERSION=0.1.6
-ARG CODEX_VERSION=0.166.0
+ARG T3_VERSION=0.1.7
+ARG CODEX_VERSION=0.167.0
 ARG OPENCODE_VERSION=1.19.5
 ARG GH_VERSION=2.103.3
-ARG OLLAMA_VERSION=0.40.13
+ARG OLLAMA_VERSION=0.40.15
+ARG NPM_VERSION=11.21.2
 
 # Providers (codex, opencode) live in a dedicated prefix owned by the
 # application user so T3's in-UI provider updates can run. T3 itself stays in
@@ -17,6 +18,13 @@ ARG PROVIDER_PREFIX=/opt/t3-providers
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
+
+# Upgrade only root-owned npm, never the application-owned provider prefix.
+RUN set -eux; \
+    /usr/local/bin/npm install --global --prefix /usr/local --cache /tmp/npm-cache \
+        --ignore-scripts --no-audit --no-fund "npm@${NPM_VERSION}"; \
+    test "$(/usr/local/bin/npm --version)" = "${NPM_VERSION}"; \
+    rm -rf /tmp/npm-cache
 
 RUN set -eux; \
     apt-get update; \
@@ -37,7 +45,7 @@ RUN set -eux; \
         "${PROVIDER_PREFIX}" "${CODEX_VERSION}" "${OPENCODE_VERSION}"; \
     npm cache clean --force
 
-# T3 0.1.6 no longer ships @t3code platform packages. Its npm launcher would
+# T3 0.1.7 no longer ships @t3code platform packages. Its npm launcher would
 # download a standalone tree into writable T3CODE_HOME on first run, so install
 # the complete official release archive here instead. Keep the full tree
 # (t3, node_modules/, client/, resource-monitor/) root-owned and immutable; the
@@ -45,8 +53,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) t3_arch=x64; t3_sha256=7cf31da90dee41f524dd5b679ebb6d404637ca5d9dc6fd8bc019511d57bb77e6 ;; \
-        arm64) t3_arch=arm64; t3_sha256=b708f059200776f50623a766854841e40eda0bb67614211cf8b6909295ce20da ;; \
+        amd64) t3_arch=x64; t3_sha256=c089892bf7922e2e73c6f44a5d1ea125c99f70e378c18361cbbed2fba1920e6c ;; \
+        arm64) t3_arch=arm64; t3_sha256=5a528e23af394cc6f359036d3cb8441fda14129d477630fc6c53e4f4a1025bc8 ;; \
         *) echo "Unsupported architecture for T3 Code: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="t3-${T3_VERSION}-linux-${t3_arch}.tar.gz"; \
@@ -86,8 +94,8 @@ RUN set -eux; \
 RUN set -eux; \
     architecture="$(dpkg --print-architecture)"; \
     case "${architecture}" in \
-        amd64) ollama_arch=amd64; ollama_sha256=c9490e0f520be21271d969e6703f012268b1d39f8b70dd58854e5bfef7a75bb6 ;; \
-        arm64) ollama_arch=arm64; ollama_sha256=913d9a28da6da86d551ce4ca531457767bb14d511cbc1d5ca93e9b3b8b9a8666 ;; \
+        amd64) ollama_arch=amd64; ollama_sha256=628c018404a4206493efd38e46251c154ede5141b8b8dc85c659b3b027c47379 ;; \
+        arm64) ollama_arch=arm64; ollama_sha256=7f699ead5cdb4ae1ed89b888b148a238af188708800871e1889ab9dcee95f247 ;; \
         *) echo "Unsupported architecture for Ollama CLI: ${architecture}" >&2; exit 1 ;; \
     esac; \
     archive="ollama-linux-${ollama_arch}.tar.zst"; \
@@ -102,11 +110,12 @@ RUN set -eux; \
 
 FROM node:24.22.2-bookworm-slim AS runtime
 
-ARG T3_VERSION=0.1.6
-ARG CODEX_VERSION=0.166.0
+ARG T3_VERSION=0.1.7
+ARG CODEX_VERSION=0.167.0
 ARG OPENCODE_VERSION=1.19.5
 ARG GH_VERSION=2.103.3
-ARG OLLAMA_VERSION=0.40.13
+ARG OLLAMA_VERSION=0.40.15
+ARG NPM_VERSION=11.21.2
 
 # Must match the toolchain stage: this prefix is owned by the application user
 # so T3's in-UI provider updates work, while T3 itself stays root-owned.
@@ -124,6 +133,13 @@ ENV HOME=/home/t3 \
     T3CODE_HOME=/home/t3/.local/share/t3-code \
     T3CODE_NO_BROWSER=true \
     T3_PORT=9877
+
+# HOME points at the persistent app home here; keep root's install cache out.
+RUN set -eux; \
+    /usr/local/bin/npm install --global --prefix /usr/local --cache /tmp/npm-cache \
+        --ignore-scripts --no-audit --no-fund "npm@${NPM_VERSION}"; \
+    test "$(/usr/local/bin/npm --version)" = "${NPM_VERSION}"; \
+    rm -rf /tmp/npm-cache
 
 RUN set -eux; \
     apt-get update; \

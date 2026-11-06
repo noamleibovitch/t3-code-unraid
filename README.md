@@ -9,27 +9,33 @@ This directory is a local Docker build context for a headless T3 Code server. It
 Example build on a Docker-capable host:
 
 ```sh
-docker build --pull --no-cache --tag t3-code-unraid:0.1.6 /opt/data/t3-code-unraid
+docker build --pull --no-cache --tag t3-code-unraid:0.1.7 /opt/data/t3-code-unraid
 ```
 
 No remote `latest` tag is used. The direct tool versions are pinned as follows:
 
 | Component | Pinned version/source |
 | --- | --- |
-| Node.js | `node:24.22.2-bookworm-slim` (Node 24 LTS with bundled npm `11.19.1`) |
-| T3 Code (`t3`) | `0.1.6` official standalone `linux-x64`/`linux-arm64` archive |
-| Codex CLI (`@openai/codex`) | `0.166.0` |
+| Node.js | `node:24.22.2-bookworm-slim` (Node 24 LTS) |
+| npm | `11.21.2`, explicitly installed into root-owned `/usr/local` in both stages |
+| T3 Code (`t3`) | `0.1.7` official standalone `linux-x64`/`linux-arm64` archive |
+| Codex CLI (`@openai/codex`) | `0.167.0` |
 | OpenCode CLI (`opencode-ai`) | `1.19.5` |
 | GitHub CLI (`gh`) | `2.103.3` |
-| Ollama Cloud client (`ollama`) | `0.40.13` |
+| Ollama Cloud client (`ollama`) | `0.40.15` |
 
-Both build stages pin the same Node `24.22.2` LTS base with bundled npm
-`11.19.1`; the major line does not move to Node 26 or standalone npm 12.
+Both build stages pin the same Node `24.22.2` LTS base and upgrade its bundled
+npm `11.19.1` to the explicit `npm@11.21.2` package with `--ignore-scripts`.
+The install prefix is `/usr/local`, and a temporary cache avoids writing root's
+cache into the application home. Both stages execute `/usr/local/bin/npm --version`
+and require exactly `11.21.2`. This is the latest nondeprecated npm 11 in the
+supplied evidence and supports Node 24; npm 12 is deliberately not adopted.
+Node remains on the 24 LTS line.
 Building with `--pull`/`no-cache` (as the CI workflow does) also refreshes the
 Debian security packages. Those refreshed packages are installed and exercised
 only by the CI image build, not by the offline checks in this source session.
 
-T3 `0.1.6` no longer ships `@t3code/t3-platform` optional packages. Its npm
+T3 `0.1.7` no longer ships `@t3code/t3-platform` optional packages. Its npm
 launcher (`bin/t3.mjs`) would download a mutable standalone tree into writable
 `T3CODE_HOME` on first start, which this image deliberately avoids. The build
 instead downloads the complete official release archive, verifies its SHA-256,
@@ -45,8 +51,8 @@ Archive names and SHA-256 values are selected for Debian `amd64` or `arm64`:
 
 | T3 archive | SHA-256 |
 | --- | --- |
-| `t3-0.1.6-linux-x64.tar.gz` | `7cf31da90dee41f524dd5b679ebb6d404637ca5d9dc6fd8bc019511d57bb77e6` |
-| `t3-0.1.6-linux-arm64.tar.gz` | `b708f059200776f50623a766854841e40eda0bb67614211cf8b6909295ce20da` |
+| `t3-0.1.7-linux-x64.tar.gz` | `c089892bf7922e2e73c6f44a5d1ea125c99f70e378c18361cbbed2fba1920e6c` |
+| `t3-0.1.7-linux-arm64.tar.gz` | `5a528e23af394cc6f359036d3cb8441fda14129d477630fc6c53e4f4a1025bc8` |
 
 | GitHub CLI archive | SHA-256 |
 | --- | --- |
@@ -55,8 +61,8 @@ Archive names and SHA-256 values are selected for Debian `amd64` or `arm64`:
 
 | Ollama archive | SHA-256 |
 | --- | --- |
-| `ollama-linux-amd64.tar.zst` | `c9490e0f520be21271d969e6703f012268b1d39f8b70dd58854e5bfef7a75bb6` |
-| `ollama-linux-arm64.tar.zst` | `913d9a28da6da86d551ce4ca531457767bb14d511cbc1d5ca93e9b3b8b9a8666` |
+| `ollama-linux-amd64.tar.zst` | `628c018404a4206493efd38e46251c154ede5141b8b8dc85c659b3b027c47379` |
+| `ollama-linux-arm64.tar.zst` | `7f699ead5cdb4ae1ed89b888b148a238af188708800871e1889ab9dcee95f247` |
 
 The GitHub CLI archive is `tar.gz`; Ollama archives are `tar.zst` and only
 `bin/ollama` is extracted. CI downloads and checks every archive's bytes during
@@ -64,16 +70,16 @@ the image build, and the Dockerfile fails closed on a download or checksum
 error. The final image contains only the Ollama client binary: it does not run
 a local Ollama server, include model storage, or require a GPU.
 
-The refresh uses the supplied release evidence dated 2026-11-01
+The refresh uses the supplied release evidence dated 2026-11-06
 (`.workflow-kit/release-evidence.json`). This source stage performed no
-downloads, image build, or Docker run. The T3 `0.1.6` digests above are copied
+downloads, image build, or Docker run. The T3 `0.1.7` digests above are copied
 from that evidence, which records a matching GitHub release-asset digest for
 both architectures; the parent must still download and hash the actual archive
 bytes. For the previous `0.1.5` release, the parent downloaded and
 SHA-256-verified the complete `linux-x64` standalone archive and ran
 `--version`, `serve --help`, and `browser setup --help` successfully. That is
 limited artifact qualification, **not** image acceptance: real image execution
-qualification remains required in CI, and no `0.1.6` artifact has been executed
+qualification remains required in CI, and no `0.1.7` artifact has been executed
 in this source stage. CI builds `amd64` only, so the arm64 checksums are
 recorded but no arm64 image build or runtime has been validated; do not claim
 arm64 support without separate image verification.
@@ -126,16 +132,16 @@ Some tools audited alongside this image live in the **persistent home**, not in 
 
 | Tool | Boundary |
 | --- | --- |
-| pnpm | Parent-owned persistent-home update to `12.16.1` is staged, not live. It is not an image component and not a completed deployment; live `pnpm` remains the older version until parent idle-only activation |
-| uv | Parent-owned persistent-home update to `0.13.6` is staged, not live. It is not an image component and not a completed deployment; live `uv` remains the older version until parent idle-only activation |
+| pnpm | Parent-staged persistent-home target `12.18.0`; activation and live-version verification belong to the parent. This source stage does not deploy it |
+| uv | Parent-staged persistent-home target `0.13.7`; activation and live-version verification belong to the parent. This source stage does not deploy it |
 | ripgrep (`rg`) | Retained at `15.2.0`; no image pin and no update in this stage |
 | Corepack | Retained at `0.36.0`; do not replace it with an unreviewed shim operation |
-| managed Python 3.12 | Parent has staged and actually executed Python `3.12.16`, OpenSSL `3.5.9`, and SQLite `3.53.1` through the new uv `0.13.6`, with `UV_PYTHON_INSTALL_DIR` set to an isolated persistent stage and `UV_PYTHON_INSTALL_BIN=false`. That stage is **not** live deployment: live managed Python remains `3.12.15` until parent idle-only activation. Do not call `3.12.15` the latest patch |
+| managed Python 3.12 | Retain the existing live Python `3.12.16` unchanged for this update. The parent executed it as UID `10000` on 2026-11-06; this source stage does not change Python |
 | Tailscale | Installed and owned by the Unraid native Docker hook, never by this image or this repository |
 
-Do not add image pins for these tools, install a local Ollama server, mutate shared host plugins, or change the Python branch. For Python `3.12.16`, availability is established in the isolated uv stage but is not live; do not describe `3.12.15` as the latest patch, and do not invent another installer or download method or promote the stage without parent idle-only activation.
+Do not add image pins for these tools, install a local Ollama server, mutate shared host plugins, or change the Python branch. Earlier isolated-stage qualification executed Python `3.12.16`, OpenSSL `3.5.9`, and SQLite `3.53.1` through uv `0.13.6`, with `UV_PYTHON_INSTALL_DIR` set to an isolated persistent stage and `UV_PYTHON_INSTALL_BIN=false`. That historical staging evidence is separate from the parent's live Python execution on 2026-11-06. Do not invent another installer or download method; any future activation remains the parent's responsibility under the idle-only guard.
 
-The parent owns persistent-home updates and must verify provenance and ownership under UID/GID `10000:10000` before applying them. Keep project package-manager pins, lockfiles, virtual environments, and the older tool versions available for rollback. Retain Node 24's bundled compatible npm; do not adopt Node 26 or standalone npm 12 here.
+The parent owns persistent-home updates and must verify provenance and ownership under UID/GID `10000:10000` before applying them. Keep project package-manager pins, lockfiles, virtual environments, and the older tool versions available for rollback. Retain Node 24 with the explicitly pinned compatible npm `11.21.2`; do not adopt Node 26 or npm 12 here.
 
 ## T3 V2 generation and automatic migrations
 
@@ -159,11 +165,11 @@ On first start of `0.1.5` against an existing V2 database, T3 runs migrations `0
 
 These migrations add indexes and peer-link tables/fence only; they do not activate any peer environment automatically. Peer links must be explicitly created or re-created by the owner.
 
-Before the first start of a new T3 version (`0.1.2` and `0.1.5` previously; `0.1.6` now), the parent must retain a quiesced snapshot of the current V2 database (`userdata/statev2.sqlite`) as the rollback reference, taken while T3 is idle. The schema is **not assumed to be downgrade-safe**: rolling back to a previous image requires restoring the matching quiesced snapshot rather than expecting reverse migrations.
+Before the first start of a new T3 version (`0.1.2` and `0.1.5` previously; `0.1.7` now), the parent must retain a quiesced snapshot of the current V2 database (`userdata/statev2.sqlite`) as the rollback reference, taken while T3 is idle. The schema is **not assumed to be downgrade-safe**: rolling back to a previous image requires restoring the matching quiesced snapshot rather than expecting reverse migrations.
 
 **Never create, replace, or overwrite an existing `statev2.sqlite`.** A manual copy of `state.sqlite` after V2 has started would overwrite V2 progress. Preserve the legacy `userdata/state.sqlite` unchanged as rollback evidence. Do **not** run `t3 doctor cleanup`; later T3 releases can delete the pre-`0.1.0` database, which must remain.
 
-Accounts, scopes, data, settings, provider credentials, and project work are retained; they live in the persistent home and workspace, not in the image. Native provider sessions, tool history, and checkpoint history are not part of the V1-to-V2 migration. Connected V1 apps remain incompatible with V2 and require app `2.0` or a matching web app. OpenCode 1 (`1.19.5`) is retained intentionally; there is no OpenCode 2 / `@opencode/cli` migration, no Node 26/npm 12 adoption, no host plugin change, and no public ingress in this update.
+Accounts, all auth grants and scopes, data, settings, provider credentials, and project work are retained; they live in the persistent home and workspace, not in the image. Native provider sessions, tool history, and checkpoint history are not part of the V1-to-V2 migration. Connected V1 apps remain incompatible with V2 and require app `2.0` or a matching web app. OpenCode 1 (`1.19.5`) is retained intentionally; there is no OpenCode 2 / `@opencode/cli` migration, no Node 26/npm 12 adoption, no host plugin change, and no public ingress in this update.
 
 ## Private Unraid Tailscale access
 
@@ -191,10 +197,13 @@ Run the public release-gate regression tests without Docker or network access:
 bash tests/image-smoke.sh --self-test
 ```
 
-The public source tests pin both T3 stages to exactly `0.1.6` and check each
-architecture's archive digest. Synthetic mutations must reject a stale stage,
-a version with an extra digit, an incorrect architecture, and an incorrect
-digest without reading private workflow-kit evidence.
+The public source tests pin both T3 and Ollama stages and check each
+architecture's archive digest. Synthetic mutations reject stale versions,
+incorrect architectures and digests, and npm installs with an unpinned package,
+an application-owned prefix, enabled scripts, or missing executable validation.
+The smoke fixtures accept the pinned npm `11.21.2` and reject stale `11.19.1`
+and near-match `11.21.20`, along with other stale or near-match executable
+versions, without reading private workflow-kit evidence.
 
 They execute the workflow's inspection and promotion shell blocks against synthetic Buildx responses, including separate provenance/SBOM manifests, reordered descriptors, lost/added/duplicated/changed descriptors, and promotion/inspection errors. They also assert that the smoke step bound-pulls the exact candidate digest before the smoke script runs and that a failed pull fails the step, and that the smoke's readiness status range stays identical to `healthcheck.sh`. A fake `docker` also drives the real smoke script through bounded shutdown fixtures: a post-SIGTERM exit `130` (the pinned Effect interruption code) is accepted, while a premature self-exit `130` before the signal and a forced SIGKILL (`exit 137`) are rejected, and a slow start that outlives the readiness deadline but is still running is not misreported as a premature exit. They additionally check the offline standalone-packaging contract: both Node base pins, every version ARG, the T3 archive extraction into `/opt/t3`, the root-owned launcher symlink, and the absence of npm T3/`@t3code` resolution. They do not build an image or move a real tag.
 

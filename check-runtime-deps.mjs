@@ -2,7 +2,7 @@
 // Build-time gate: fail the image build when the pinned T3 standalone runtime
 // cannot start on THIS base image.
 //
-// T3 0.1.6 ships an official standalone archive whose complete tree contains
+// T3 0.1.7 ships an official standalone archive whose complete tree contains
 // the native `t3` executable plus node_modules/, client/, and resource-monitor/.
 // The image installs that tree root-owned at /opt/t3 and executes /opt/t3/t3
 // directly as PID 1. There is no npm-installed package or @t3code platform
@@ -19,10 +19,12 @@ import { execFileSync } from "node:child_process";
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const expectedVersion = "t3 v0.1.6";
+const expectedVersion = "t3 v0.1.7";
 const t3Root = "/opt/t3";
 const binary = join(t3Root, "t3");
 const launcher = "/usr/local/bin/t3";
+const npmBinary = "/usr/local/bin/npm";
+const npmRoot = "/usr/local/lib/node_modules/npm";
 
 function fail(message) {
   console.error(message);
@@ -40,12 +42,15 @@ function inspect(path, { symlink = false } = {}) {
 // Protect the shipped application tree and its launch path: root-owned and not
 // group/world-writable, so the unprivileged application cannot replace code
 // that the root Unraid Tailscale hook executes.
-for (const path of ["/", "/opt", t3Root, binary, "/usr/local/bin", launcher]) {
-  const stats = inspect(path, { symlink: path === launcher });
+for (const path of ["/", "/opt", t3Root, binary, "/usr/local", "/usr/local/bin", launcher,
+  "/usr/local/lib", "/usr/local/lib/node_modules", npmRoot, join(npmRoot, "bin"),
+  join(npmRoot, "bin/npm-cli.js"), npmBinary]) {
+  const symlink = path === launcher || path === npmBinary;
+  const stats = inspect(path, { symlink });
   if (stats.uid !== 0 || stats.gid !== 0) {
     fail(`${path} must be root-owned; got ${stats.uid}:${stats.gid}`);
   }
-  if (path !== launcher && (stats.mode & 0o022) !== 0) {
+  if (!symlink && (stats.mode & 0o022) !== 0) {
     fail(`${path} must not be group/world-writable; mode ${(stats.mode & 0o777).toString(8)}`);
   }
 }
@@ -61,6 +66,9 @@ if (!inspect(launcher, { symlink: true }).isSymbolicLink()) {
 }
 if (realpathSync(launcher) !== realpathSync(binary)) {
   fail(`${launcher} must resolve to ${binary}`);
+}
+if (realpathSync(npmBinary) !== join(npmRoot, "bin/npm-cli.js")) {
+  fail(`${npmBinary} must resolve to the root-owned npm CLI`);
 }
 
 // The providers live in a dedicated application-owned prefix so T3 can update
@@ -82,18 +90,22 @@ try {
   process.exit(1);
 }
 
-// The providers are on PATH; prove they resolve and run, so a broken shim or a
-// skipped install script fails the build instead of the container.
-for (const [command, args] of [
-  ["codex", ["--version"]],
-  ["opencode", ["--version"]],
+// Execute each shipped CLI, including the actual root-owned npm binary.
+// Package metadata alone cannot catch a stale executable or broken shim.
+for (const [command, args, expected] of [
+  ["node", ["--version"], /^v24\.22\.2$/],
+  [npmBinary, ["--version"], /^11\.21\.2$/],
+  ["codex", ["--version"], /^codex-cli 0\.167\.0$/],
+  ["opencode", ["--version"], /^1\.19\.5$/],
+  ["gh", ["version"], /^gh version 2\.103\.3 .+$/m],
+  ["ollama", ["--version"], /^(?:ollama version is|Warning: client version is) 0\.40\.15$/m],
 ]) {
   try {
     const output = execFileSync(command, args, { encoding: "utf8" }).trim();
+    if (!expected.test(output)) fail(`unexpected ${command} version output: ${output}`);
     console.log(`${command} runtime OK: ${output.split("\n")[0]}`);
   } catch (error) {
-    console.error(`${command} failed to run from ${providerPrefix}: ${error.message}`);
-    process.exit(1);
+    fail(`${command} failed to run: ${error.message}`);
   }
 }
 

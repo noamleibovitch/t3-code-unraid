@@ -72,29 +72,29 @@ dockerfile = (repo_root / "Dockerfile").read_text()
 entrypoint = (repo_root / "entrypoint.sh").read_text()
 runtime_check = (repo_root / "check-runtime-deps.mjs").read_text()
 assert dockerfile.count("FROM node:24.22.2-bookworm-slim AS ") == 2
-for pin in ("ARG CODEX_VERSION=0.166.0",
+for pin in ("ARG CODEX_VERSION=0.167.0",
             "ARG OPENCODE_VERSION=1.19.5", "ARG GH_VERSION=2.103.3",
-            "ARG OLLAMA_VERSION=0.40.13"):
-    assert dockerfile.count(pin) == 2, pin
+            "ARG OLLAMA_VERSION=0.40.15", "ARG NPM_VERSION=11.21.2"):
+    assert dockerfile.splitlines().count(pin) == 2, pin
 
 # Keep this public gate independent of private workflow-kit evidence. Check
 # exact version lines and each architecture's digest, not just digest presence.
 def assert_t3_release(text):
-    assert re.findall(r"^ARG T3_VERSION=(.+)$", text, re.M) == ["0.1.6", "0.1.6"], \
-        "both T3 stages must pin exactly 0.1.6"
+    assert re.findall(r"^ARG T3_VERSION=(.+)$", text, re.M) == ["0.1.7", "0.1.7"], \
+        "both T3 stages must pin exactly 0.1.7"
     pins = re.findall(r"^[ \t]*(amd64|arm64)\) t3_arch=(\S+); t3_sha256=([0-9a-f]{64}) ;; \\$", text, re.M)
     assert sorted(pins) == [
-        ("amd64", "x64", "7cf31da90dee41f524dd5b679ebb6d404637ca5d9dc6fd8bc019511d57bb77e6"),
-        ("arm64", "arm64", "b708f059200776f50623a766854841e40eda0bb67614211cf8b6909295ce20da"),
-    ], "T3 architecture/digest mapping must match the 0.1.6 release"
+        ("amd64", "x64", "c089892bf7922e2e73c6f44a5d1ea125c99f70e378c18361cbbed2fba1920e6c"),
+        ("arm64", "arm64", "5a528e23af394cc6f359036d3cb8441fda14129d477630fc6c53e4f4a1025bc8"),
+    ], "T3 architecture/digest mapping must match the 0.1.7 release"
 
 assert_t3_release(dockerfile)
 for changed in (
-    dockerfile.replace("ARG T3_VERSION=0.1.6", "ARG T3_VERSION=0.1.5", 1),
-    dockerfile.replace("ARG T3_VERSION=0.1.6", "ARG T3_VERSION=0.1.60"),
+    dockerfile.replace("ARG T3_VERSION=0.1.7", "ARG T3_VERSION=0.1.6", 1),
+    dockerfile.replace("ARG T3_VERSION=0.1.7", "ARG T3_VERSION=0.1.70"),
     dockerfile.replace("t3_arch=x64", "t3_arch=arm64", 1),
-    dockerfile.replace("7cf31da90dee41f524dd5b679ebb6d404637ca5d9dc6fd8bc019511d57bb77e6",
-                       "b708f059200776f50623a766854841e40eda0bb67614211cf8b6909295ce20da", 1),
+    dockerfile.replace("c089892bf7922e2e73c6f44a5d1ea125c99f70e378c18361cbbed2fba1920e6c",
+                       "5a528e23af394cc6f359036d3cb8441fda14129d477630fc6c53e4f4a1025bc8", 1),
 ):
     try:
         assert_t3_release(changed)
@@ -103,6 +103,55 @@ for changed in (
     else:
         raise AssertionError("T3 release gate accepted a stale version or incorrect archive pin")
 
+def assert_ollama_release(text):
+    assert re.findall(r"^ARG OLLAMA_VERSION=(.+)$", text, re.M) == ["0.40.15", "0.40.15"]
+    pins = re.findall(r"^[ \t]*(amd64|arm64)\) ollama_arch=(\S+); ollama_sha256=([0-9a-f]{64}) ;; \\$", text, re.M)
+    assert sorted(pins) == [
+        ("amd64", "amd64", "628c018404a4206493efd38e46251c154ede5141b8b8dc85c659b3b027c47379"),
+        ("arm64", "arm64", "7f699ead5cdb4ae1ed89b888b148a238af188708800871e1889ab9dcee95f247"),
+    ], "Ollama architecture/digest mapping must match the 0.40.15 release"
+
+assert_ollama_release(dockerfile)
+for changed in (
+    dockerfile.replace("ARG OLLAMA_VERSION=0.40.15", "ARG OLLAMA_VERSION=0.40.13", 1),
+    dockerfile.replace("ollama_arch=amd64", "ollama_arch=arm64", 1),
+    dockerfile.replace("628c018404a4206493efd38e46251c154ede5141b8b8dc85c659b3b027c47379",
+                       "7f699ead5cdb4ae1ed89b888b148a238af188708800871e1889ab9dcee95f247", 1),
+):
+    try:
+        assert_ollama_release(changed)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("Ollama release gate accepted a stale version or incorrect archive pin")
+
+def assert_npm_install(text):
+    assert re.findall(r"^ARG NPM_VERSION=(.+)$", text, re.M) == ["11.21.2", "11.21.2"]
+    # Check each stage's explicit root prefix, script suppression and real CLI
+    # validation; a pin alone does not upgrade the Node base's bundled npm.
+    for stage in re.split(r"^FROM .+$", text, flags=re.M)[1:]:
+        commands = stage.replace("\\\n", " ")
+        assert re.search(r'/usr/local/bin/npm install --global --prefix /usr/local --cache /tmp/npm-cache\s+'
+                         r'--ignore-scripts --no-audit --no-fund "npm@\$\{NPM_VERSION\}";', commands)
+        assert 'test "$(/usr/local/bin/npm --version)" = "${NPM_VERSION}";' in commands
+        assert 'rm -rf /tmp/npm-cache' in commands
+    assert not re.search(r'^ENV\s+.*(?:PATH|NPM_CONFIG_PREFIX)=.*(?:PROVIDER_PREFIX|t3-providers)', text, re.M)
+
+assert_npm_install(dockerfile)
+for changed in (
+    dockerfile.replace("ARG NPM_VERSION=11.21.2", "ARG NPM_VERSION=11.19.1", 1),
+    dockerfile.replace('"npm@${NPM_VERSION}"', '"npm@latest"', 1),
+    dockerfile.replace('--prefix /usr/local --cache', '--prefix /opt/t3-providers --cache', 1),
+    dockerfile.replace('--ignore-scripts --no-audit', '--no-audit', 1),
+    dockerfile.replace('$(/usr/local/bin/npm --version)', '$(node --version)', 1),
+):
+    try:
+        assert_npm_install(changed)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("npm gate accepted an unpinned, writable-prefix, script-enabled or unchecked install")
+
 assert "t3-${T3_VERSION}-linux-${t3_arch}.tar.gz" in dockerfile
 assert "tar -xzf \"/tmp/${archive}\" -C /opt/t3 --strip-components=1" in dockerfile
 assert "ln -s /opt/t3/t3 /usr/local/bin/t3" in dockerfile
@@ -110,7 +159,7 @@ assert "t3@${T3_VERSION}" not in dockerfile
 assert "@t3code/t3-" not in entrypoint and "@t3code/t3-" not in runtime_check
 assert "exec /opt/t3/t3 serve" in entrypoint
 assert "/opt/t3/t3" in runtime_check
-assert 'const expectedVersion = "t3 v0.1.6";' in runtime_check
+assert 'const expectedVersion = "t3 v0.1.7";' in runtime_check
 
 # A cold pull must never be charged against the smoke's per-call Docker budget:
 # the container is always started from the copy the CI step already fetched.
@@ -285,6 +334,20 @@ if args[0] == "exec":
     if "stat" in args:
         sys.stdout.write("0:0\\n")
         sys.exit(0)
+    versions = {
+        "node": "v24.22.2", "/usr/local/bin/npm": "11.21.2",
+        "codex": "codex-cli 0.167.0", "opencode": "1.19.5", "t3": "t3 v0.1.7",
+        "gh": "gh version 2.103.3 (2026-10-28)",
+        "ollama": "Warning: could not connect to a running Ollama instance\\nWarning: client version is 0.40.15",
+    }
+    if args[-1] in ("--version", "version") and args[-2] in versions:
+        command = args[-2]
+        write("version-" + command.replace("/", "_"), "checked")
+        output = versions[command]
+        if os.environ.get("SMOKE_VERSION_COMMAND") == command:
+            output = os.environ["SMOKE_VERSION_OUTPUT"]
+        sys.stdout.write(output + "\\n")
+        sys.exit(0)
     sys.exit(0)
 if args[0] == "inspect":
     joined = " ".join(args)
@@ -334,6 +397,8 @@ sys.exit(0)
                 assert expect_message in result.stderr, (scenario, result.stderr)
             else:
                 assert "SMOKE_IMAGE_ID=" + mock_image in result.stdout, result.stdout
+                for command in ("node", "/usr/local/bin/npm", "codex", "opencode", "t3", "gh", "ollama"):
+                    assert (state / ("version-" + command.replace("/", "_"))).exists(), command
         smoke_case("accept130", 130, True, None)
         smoke_case("premature130", 130, False, "before the smoke sent SIGTERM")
         smoke_case("forced137", 137, False, "exit 137")
@@ -345,7 +410,17 @@ sys.exit(0)
         # production default and per-call Docker bounds are unchanged.
         smoke_case("lateReady", 130, True, None, start_deadline="3",
                    extra_env={"SMOKE_SLOW_RUNNING_INSPECT": "5"})
-print("PASS: 28 offline release-gate cases (split attestations, missing evidence, descriptor multiset, bounded pre-pull ordering, smoke-to-manifest binding, promotion errors, readiness/healthcheck parity, bounded SIGTERM exit classification, deadline-independent pre-signal running check) plus standalone T3 packaging/pin assertions and four T3 version/archive pin rejection cases")
+        for command, stale in (
+            ("node", "v26.0.0"), ("/usr/local/bin/npm", "11.19.1"),
+            ("/usr/local/bin/npm", "11.21.20"), ("codex", "codex-cli 0.166.0"),
+            ("opencode", "1.19.50"), ("t3", "t3 v0.1.6"),
+            ("gh", "gh version 2.103.30 (2026-10-28)"),
+            ("ollama", "Warning: client version is 0.40.150"),
+        ):
+            smoke_case("version-" + command.replace("/", "_") + "-" + stale.split()[-1],
+                       130, False, "unexpected " + command + " version",
+                       extra_env={"SMOKE_VERSION_COMMAND": command, "SMOKE_VERSION_OUTPUT": stale})
+print("PASS: 28 offline release-gate cases (split attestations, missing evidence, descriptor multiset, bounded pre-pull ordering, smoke-to-manifest binding, promotion errors, readiness/healthcheck parity, bounded SIGTERM exit classification, deadline-independent pre-signal running check) plus standalone packaging/pin assertions, 12 T3/Ollama/npm source rejection cases and eight executable version rejection cases")
 PY
 fi
 
@@ -492,7 +567,8 @@ for (const key of ["Uid", "Gid"]) {
 }
 const protectedPaths = new Set([
   "/opt/t3", native, "/opt/t3/node_modules", "/opt/t3/client", "/opt/t3/resource-monitor",
-  "/usr/local/bin/t3",
+  "/usr/local/bin/t3", "/usr/local/bin/npm", fs.realpathSync("/usr/local/bin/npm"),
+  "/usr/local/lib/node_modules/npm",
 ]);
 for (const p of [...protectedPaths, "/usr/local/bin", "/opt", ...process.env.PATH.split(":")]) {
   if (!p.startsWith("/")) throw new Error("relative or empty PATH entry: " + p);
@@ -512,16 +588,32 @@ if (!fs.lstatSync("/usr/local/bin/t3").isSymbolicLink())
   throw new Error("not a launch symlink: /usr/local/bin/t3");
 if (fs.realpathSync("/usr/local/bin/t3") !== native)
   throw new Error("/usr/local/bin/t3 does not resolve to /opt/t3/t3");
+if (fs.realpathSync("/usr/local/bin/npm") !== "/usr/local/lib/node_modules/npm/bin/npm-cli.js")
+  throw new Error("/usr/local/bin/npm does not resolve to the root-owned npm CLI");
 for (const name of ["codex", "opencode"]) {
   const path = "/usr/local/bin/" + name;
   if (!fs.lstatSync(path).isSymbolicLink()) throw new Error("not a launch symlink: " + path);
 }
 ' || fail "standalone T3 tree, protected launch paths, or image PATH violated the security contract"
 
-# Execute the real provider CLIs (and the T3 launcher) as the app user.
-app_exec codex --version >/dev/null || fail "codex CLI failed to run as ${APP_UID}:${APP_GID}"
-app_exec opencode --version >/dev/null || fail "opencode CLI failed to run as ${APP_UID}:${APP_GID}"
-app_exec t3 --version >/dev/null || fail "t3 launcher failed to run as ${APP_UID}:${APP_GID}"
+# Execute the actual binaries as the app user and reject stale or near-match
+# versions, including the root-owned npm CLI rather than package metadata.
+expect_version() {
+    command="$1"
+    expected="$2"
+    output="$(app_exec "${command}" --version)" || fail "${command} CLI failed to run as ${APP_UID}:${APP_GID}"
+    [ "${output}" = "${expected}" ] || fail "unexpected ${command} version: ${output}; expected ${expected}"
+}
+expect_version node v24.22.2
+expect_version /usr/local/bin/npm 11.21.2
+expect_version codex 'codex-cli 0.167.0'
+expect_version opencode 1.19.5
+expect_version t3 't3 v0.1.7'
+gh_version="$(app_exec gh version)" || fail "gh CLI failed to run"
+[[ "${gh_version%%$'\n'*}" == 'gh version 2.103.3 '* ]] || fail "unexpected gh version: ${gh_version}"
+ollama_version="$(app_exec ollama --version)" || fail "ollama CLI failed to run"
+printf '%s\n' "${ollama_version}" | grep -Ex '(ollama version is|Warning: client version is) 0\.40\.15' >/dev/null \
+    || fail "unexpected ollama version: ${ollama_version}"
 
 # Emit the running container's image ID so the caller can tie the smoke result
 # to the exact inspected manifest configuration digest.
